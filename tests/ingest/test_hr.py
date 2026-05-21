@@ -233,13 +233,16 @@ class TestFetchAllActiveEmployees:
         )
 
         with respx.mock:
-            respx.get("https://hr.example.com/employees").mock(return_value=httpx.Response(401))
+            route = respx.get("https://hr.example.com/employees").mock(
+                return_value=httpx.Response(401)
+            )
 
             with pytest.raises(AuthError) as exc_info:
                 async for _ in fetch_all_active_employees(settings):
                     pass
 
             assert exc_info.value.source == "hr"
+            assert route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_403_raises_auth_error(self) -> None:
@@ -250,13 +253,16 @@ class TestFetchAllActiveEmployees:
         )
 
         with respx.mock:
-            respx.get("https://hr.example.com/employees").mock(return_value=httpx.Response(403))
+            route = respx.get("https://hr.example.com/employees").mock(
+                return_value=httpx.Response(403)
+            )
 
             with pytest.raises(AuthError) as exc_info:
                 async for _ in fetch_all_active_employees(settings):
                     pass
 
             assert exc_info.value.source == "hr"
+            assert route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_5xx_retried_then_succeeds(self) -> None:
