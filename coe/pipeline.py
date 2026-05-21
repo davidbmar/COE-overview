@@ -11,11 +11,13 @@ Implements a single end-to-end run that:
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from coe.config import Settings
@@ -28,7 +30,7 @@ from coe.ingest.hr import fetch_all_active_employees
 from coe.ingest.jira import fetch_updated_since as jira_fetch
 from coe.ingest.vibranium import fetch_updated_since as vibranium_fetch
 from coe.ingest.wiz import fetch_updated_since as wiz_fetch
-from coe.logging import CaptureLogsCtx
+from coe.log_capture import CaptureLogsCtx
 from coe.normalize import (
     crowdstrike_to_coe_event,
     jira_to_coe_event,
@@ -117,59 +119,61 @@ async def _run_source(
     """
     log = structlog.get_logger(__name__)
     with CaptureLogsCtx() as logs:
-        structlog.contextvars.bind_contextvars(source=source.value)
         try:
-            fetcher, normalizer = _DISPATCH[source]
-            natural_key = _NATURAL_KEY_FIELD[source]
-            events: list[CoeEvent] = []
+            structlog.contextvars.bind_contextvars(source=source.value)
+            try:
+                fetcher, normalizer = _DISPATCH[source]
+                natural_key = _NATURAL_KEY_FIELD[source]
+                events: list[CoeEvent] = []
 
-            # One long-lived session for raw audit so we can flush per batch.
-            async with session_factory() as raw_session:
-                raw_buffer: list[dict[str, Any]] = []
-                async for raw in fetcher(since):
-                    raw_dict = raw.model_dump(mode="json")
-                    # 1. Persist raw FIRST, before normalization is attempted.
-                    #    If normalization throws on this record, the raw audit
-                    #    has already been captured.
-                    raw_buffer.append({"source_id": raw_dict[natural_key], "payload": raw_dict})
-                    if len(raw_buffer) >= 50:
+                # One long-lived session for raw audit so we can flush per batch.
+                async with session_factory() as raw_session:
+                    raw_buffer: list[dict[str, Any]] = []
+                    async for raw in fetcher(since):
+                        raw_dict = raw.model_dump(mode="json")
+                        # 1. Persist raw FIRST, before normalization is attempted.
+                        #    If normalization throws on this record, the raw audit
+                        #    has already been captured.
+                        raw_buffer.append({"source_id": raw_dict[natural_key], "payload": raw_dict})
+                        if len(raw_buffer) >= 50:
+                            await insert_raw_records(raw_session, source, raw_buffer)
+                            await raw_session.commit()
+                            raw_buffer.clear()
+
+                        # 2. Normalize. Per-record failures log a warning but do
+                        #    not abort the source — raw audit survives, and other
+                        #    records in this source can still be processed.
+                        try:
+                            ev = normalizer(raw)
+                            resolved = resolver.resolve(ev.owner_email)
+                            ev.owner_email = resolved.owner_email
+                            ev.manager_email = resolved.manager_email
+                            ev.missing_owner_in_hr = resolved.missing_owner_in_hr
+                            events.append(ev)
+                        except Exception as exc:
+                            log.warning(
+                                "normalize-failed",
+                                source_id=raw_dict.get(natural_key),
+                                error=str(exc),
+                            )
+
+                    # Flush any remaining raw records.
+                    if raw_buffer:
                         await insert_raw_records(raw_session, source, raw_buffer)
                         await raw_session.commit()
-                        raw_buffer.clear()
 
-                    # 2. Normalize. Per-record failures log a warning but do
-                    #    not abort the source — raw audit survives, and other
-                    #    records in this source can still be processed.
-                    try:
-                        ev = normalizer(raw)
-                        resolved = resolver.resolve(ev.owner_email)
-                        ev.owner_email = resolved.owner_email
-                        ev.manager_email = resolved.manager_email
-                        ev.missing_owner_in_hr = resolved.missing_owner_in_hr
-                        events.append(ev)
-                    except Exception as exc:
-                        log.warning(
-                            "normalize-failed",
-                            source_id=raw_dict.get(natural_key),
-                            error=str(exc),
-                        )
+                # 3. Upsert all successfully-normalized events in one batch.
+                async with session_factory() as session:
+                    ingested = await upsert_coe_events(session, events)
+                    await session.commit()
 
-                # Flush any remaining raw records.
-                if raw_buffer:
-                    await insert_raw_records(raw_session, source, raw_buffer)
-                    await raw_session.commit()
+                return SourceResult(source, ingested, error=None, log_events=list(logs))
 
-            # 3. Upsert all successfully-normalized events in one batch.
-            async with session_factory() as session:
-                ingested = await upsert_coe_events(session, events)
-                await session.commit()
-
+            except Exception as exc:
+                log.exception("source-failed", source=source.value)
+                return SourceResult(source, 0, error=str(exc), log_events=list(logs))
+        finally:
             structlog.contextvars.unbind_contextvars("source")
-            return SourceResult(source, ingested, error=None, log_events=list(logs))
-
-        except Exception as exc:
-            structlog.contextvars.unbind_contextvars("source")
-            return SourceResult(source, 0, error=str(exc), log_events=list(logs))
 
 
 async def run(
@@ -201,8 +205,10 @@ async def run(
         ctx = await start_run(session, settings)
 
     # 2. HR sync: sequential, non-fatal on failure
+    hr_error: str | None = None
+    hr_warnings: list[dict[str, Any]] = []
     try:
-        with CaptureLogsCtx():
+        with CaptureLogsCtx() as hr_logs:
             structlog.contextvars.bind_contextvars(source="hr")
             async with session_factory() as session:
                 employees = []
@@ -211,7 +217,9 @@ async def run(
                 await upsert_employees(session, employees)
                 await session.commit()
             structlog.contextvars.unbind_contextvars("source")
-    except Exception:
+        hr_warnings = list(hr_logs)
+    except Exception as exc:
+        hr_error = str(exc)
         log.warning("hr-sync-failed", exc_info=True)
         structlog.contextvars.unbind_contextvars("source")
 
@@ -240,6 +248,22 @@ async def run(
     has_error = False
     has_success = False
 
+    # Include HR in the errors_json if it failed or has warnings
+    if hr_error or hr_warnings:
+        if errors_json is None:
+            errors_json = {}
+        errors_json["hr"] = {
+            "error": hr_error,
+            "warnings": hr_warnings if hr_warnings else [],
+        }
+        if hr_error:
+            has_error = True
+        else:
+            has_success = True
+    else:
+        has_success = True
+
+    # Include four sources in the errors_json
     for sr in source_results:
         if sr.error or sr.log_events:
             if errors_json is None:
@@ -264,14 +288,35 @@ async def run(
         status = "failed"
 
     # 6. Write final state
+    # Coerce errors_json to JSON-safe format (handle datetimes, exceptions, etc.)
+    if errors_json is not None:
+        errors_json = json.loads(json.dumps(errors_json, default=str))
+
     async with session_factory() as session:
-        await finish_run(
-            session,
-            ctx.run_id,
-            status=status,
-            events_ingested=events_ingested,
-            errors_json=errors_json,
-        )
+        try:
+            await finish_run(
+                session,
+                ctx.run_id,
+                status=status,
+                events_ingested=events_ingested,
+                errors_json=errors_json,
+            )
+        except Exception as exc:
+            # Rescue: attempt to mark run as failed if finish_run fails
+            log.exception("finish-run-failed", run_id=ctx.run_id, error=str(exc))
+            try:
+                await session.execute(
+                    text("UPDATE coe_runs SET status='failed', finished_at=now() WHERE id=:id"),
+                    {"id": ctx.run_id},
+                )
+                await session.commit()
+            except Exception as rescue_exc:
+                log.exception(
+                    "finish-run-rescue-failed",
+                    run_id=ctx.run_id,
+                    original_error=str(exc),
+                    rescue_error=str(rescue_exc),
+                )
 
     # 7. Return result
     return PipelineResult(

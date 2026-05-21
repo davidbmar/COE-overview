@@ -1,14 +1,13 @@
 """Context-variable-based structlog capture for per-task log events.
 
 Provides a capture_processor that feeds structlog events into a per-task
-ContextVar buffer, and a context manager (capture_logs_ctx) that isolates
+ContextVar buffer, and a context manager (CaptureLogsCtx) that isolates
 log capture to a single task without global state pollution.
 """
 
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Mapping
 from typing import Any
 
 import structlog
@@ -18,12 +17,10 @@ _capture_buffer: contextvars.ContextVar[list[dict[str, Any]] | None] = contextva
 )
 
 
-def capture_processor(
-    _logger: Any, _method: str, event_dict: Mapping[str, Any]
-) -> Mapping[str, Any]:
+def capture_processor(_logger: Any, _method: str, event_dict: Any) -> Any:
     """structlog processor that appends to the current task's capture buffer.
 
-    If no buffer is active (not inside a capture_logs_ctx), the event passes through
+    If no buffer is active (not inside a CaptureLogsCtx), the event passes through
     unchanged. This allows logging to function in any context without errors.
 
     Args:
@@ -91,7 +88,3 @@ def configure_structlog() -> None:
         wrapper_class=structlog.make_filtering_bound_logger(20),  # INFO level
         cache_logger_on_first_use=False,  # capture must see fresh logger
     )
-
-
-# Backwards compatibility: old lowercase name still works
-capture_logs_ctx = CaptureLogsCtx

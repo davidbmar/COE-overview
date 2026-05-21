@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from coe.config import get_settings
-from coe.logging import configure_structlog
+from coe.log_capture import configure_structlog
 from coe.pipeline import run
 
 # Path used by the K8s CronJob to hand run_id from the ingest container

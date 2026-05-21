@@ -6,7 +6,8 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import func, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from coe.db.base import Base
@@ -21,14 +22,14 @@ _RAW_MODEL: dict[Source, type[Base]] = {
 
 
 async def upsert_coe_events(session: AsyncSession, events: Iterable[CoeEvent]) -> int:
-    """Upsert CoeEvent rows idempotently.
+    """Upsert CoeEvent rows idempotently using SQLAlchemy dialect helpers.
 
     INSERT ... ON CONFLICT (source, source_id) DO UPDATE updates mutable fields
     (title, severity, status, owner_email, manager_email, missing_owner_in_hr,
     sla_due_at, priority, updated_at, last_seen_at, raw) while preserving
     immutable fields (id, source, source_id, opened_at, coe_review_status).
 
-    Processes events one at a time with individual upsert statements.
+    Batches inserts in groups of 500 for memory efficiency.
 
     Args:
         session: AsyncSession for the database connection.
@@ -44,32 +45,11 @@ async def upsert_coe_events(session: AsyncSession, events: Iterable[CoeEvent]) -
         return 0
 
     total = len(events_list)
+    batch_size = 500
 
-    # Upsert each event individually using raw SQL
-    for evt in events_list:
-        sql = """
-            INSERT INTO coe_events
-            (source, source_id, title, severity, status, owner_email, manager_email,
-             missing_owner_in_hr, sla_due_at, priority, opened_at, updated_at, raw)
-            VALUES
-            (:source, :source_id, :title, :severity, :status, :owner_email, :manager_email,
-             :missing_owner_in_hr, :sla_due_at, :priority, :opened_at, :updated_at, :raw)
-            ON CONFLICT ON CONSTRAINT uq_coe_events_source_sourceid
-            DO UPDATE SET
-                title = excluded.title,
-                severity = excluded.severity,
-                status = excluded.status,
-                owner_email = excluded.owner_email,
-                manager_email = excluded.manager_email,
-                missing_owner_in_hr = excluded.missing_owner_in_hr,
-                sla_due_at = excluded.sla_due_at,
-                priority = excluded.priority,
-                updated_at = excluded.updated_at,
-                last_seen_at = statement_timestamp(),
-                raw = excluded.raw
-        """
-
-        params = {
+    # Helper to convert CoeEvent instance to dict of column values
+    def _event_to_row(evt: CoeEvent) -> dict[str, Any]:
+        return {
             "source": evt.source.value if hasattr(evt.source, "value") else evt.source,
             "source_id": evt.source_id,
             "title": evt.title,
@@ -85,7 +65,30 @@ async def upsert_coe_events(session: AsyncSession, events: Iterable[CoeEvent]) -
             "raw": json.dumps(evt.raw) if isinstance(evt.raw, dict) else evt.raw,
         }
 
-        await session.execute(text(sql), params)
+    # Batch upserts in groups of 500
+    for i in range(0, len(events_list), batch_size):
+        batch = events_list[i : i + batch_size]
+        rows = [_event_to_row(evt) for evt in batch]
+
+        # Use SQLAlchemy dialect insert with on_conflict_do_update
+        stmt = insert(CoeEvent).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[CoeEvent.source, CoeEvent.source_id],
+            set_={
+                CoeEvent.title: stmt.excluded.title,
+                CoeEvent.severity: stmt.excluded.severity,
+                CoeEvent.status: stmt.excluded.status,
+                CoeEvent.owner_email: stmt.excluded.owner_email,
+                CoeEvent.manager_email: stmt.excluded.manager_email,
+                CoeEvent.missing_owner_in_hr: stmt.excluded.missing_owner_in_hr,
+                CoeEvent.sla_due_at: stmt.excluded.sla_due_at,
+                CoeEvent.priority: stmt.excluded.priority,
+                CoeEvent.updated_at: stmt.excluded.updated_at,
+                CoeEvent.last_seen_at: func.statement_timestamp(),
+                CoeEvent.raw: stmt.excluded.raw,
+            },
+        )
+        await session.execute(stmt)
 
     return total
 

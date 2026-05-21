@@ -15,10 +15,11 @@ from unittest.mock import patch
 import pytest
 import respx
 from httpx import Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from coe.config import Settings
-from coe.db.models import CoeRun
+from coe.db.models import CoeEvent, CoeRun
 from coe.pipeline import run
 
 
@@ -156,8 +157,8 @@ async def test_ac3_5_bootstrap(
 
         # Verify bootstrap
         assert result.is_bootstrap is True
-        # Status is ok or partial (if HR or one source has issues)
-        assert result.status in ("ok", "partial")
+        # Status should be ok (all four mocked sources succeed)
+        assert result.status == "ok"
         assert result.events_ingested >= 1
 
         # Verify coe_runs row
@@ -319,12 +320,31 @@ async def test_ac3_2_idempotent(
         result1 = await run(session_factory, mock_settings)
         count_after_first = result1.events_ingested
 
+        # Snapshot the row's title before second run
+        async with session_factory() as session:
+            stmt = select(CoeEvent).where(CoeEvent.source_id == "TEST-1")
+            row_after_first = (await session.execute(stmt)).scalar_one_or_none()
+            assert row_after_first is not None
+            title_after_first = row_after_first.title
+
         # Second run
         result2 = await run(session_factory, mock_settings)
         count_after_second = result2.events_ingested
 
         # Same count (idempotent upsert)
         assert count_after_first == count_after_second == 1
+
+        # Verify coe_events table has exactly 1 row (not 2)
+        async with session_factory() as session:
+            total_count = await session.scalar(select(func.count()).select_from(CoeEvent))
+            assert total_count == 1
+
+            # Verify title is unchanged (business fields are stable)
+            row_after_second = await session.scalar(
+                select(CoeEvent).where(CoeEvent.source_id == "TEST-1")
+            )
+            assert row_after_second is not None
+            assert row_after_second.title == title_after_first
 
 
 @pytest.mark.integration
@@ -491,9 +511,10 @@ async def test_ac3_4_per_source_failure_isolation_401(
         assert result.status in ("partial", "failed")
         assert result.events_ingested >= 1
 
-        # errors_json should contain wiz error if captured
-        if result.errors_json is not None and "wiz" in result.errors_json:
-            assert result.errors_json["wiz"]["error"] is not None
+        # errors_json must contain wiz error
+        assert result.errors_json is not None
+        assert "wiz" in result.errors_json
+        assert result.errors_json["wiz"]["error"] is not None
 
 
 @pytest.mark.integration
@@ -571,6 +592,157 @@ async def test_ac3_4_transient_error(
         assert result.status in ("partial", "failed")
         assert result.events_ingested >= 1
 
-        # errors_json should contain wiz transient error if captured
-        if result.errors_json is not None and "wiz" in result.errors_json:
-            assert result.errors_json["wiz"]["error"] is not None
+        # errors_json must contain wiz transient error
+        assert result.errors_json is not None
+        assert "wiz" in result.errors_json
+        assert result.errors_json["wiz"]["error"] is not None
+
+
+@pytest.mark.integration
+async def test_ac3_4_hr_failure_isolation(
+    session_factory: async_sessionmaker[AsyncSession],
+    mock_settings: Settings,
+    patch_get_settings: Any,
+) -> None:
+    """AC3.4: HR sync failure doesn't block sources; status=partial."""
+    with respx.mock:
+        # Jira: success
+        respx.post("https://jira.test/rest/api/3/search/jql").mock(
+            return_value=Response(
+                200,
+                json={
+                    "issues": [
+                        {
+                            "key": "TEST-1",
+                            "fields": {
+                                "summary": "Jira Issue",
+                                "priority": {"name": "High"},
+                                "status": {"name": "Open"},
+                                "assignee": {"emailAddress": "test@test.com"},
+                                "updated": "2026-05-21T18:00:00.000Z",
+                                "created": "2026-05-21T17:00:00.000Z",
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+
+        # Wiz: success
+        respx.post("https://wiz-auth.test/oauth/token").mock(
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
+        )
+        respx.post("https://wiz-api.test/graphql").mock(
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
+        )
+
+        # CrowdStrike: success
+        respx.post("https://cs-api.test/oauth2/token").mock(
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
+        )
+        respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
+            return_value=Response(200, json={"resources": []})
+        )
+
+        # Vibranium: success
+        respx.get("https://vibranium.test/incidents").mock(
+            return_value=Response(200, json={"data": [], "next_cursor": None})
+        )
+
+        # HR: 500 error
+        respx.get("https://hr.test/employees").mock(
+            return_value=Response(500, text="Internal Server Error")
+        )
+
+        # Run
+        result = await run(session_factory, mock_settings)
+
+        # HR failed but sources succeeded → status=partial
+        assert result.status == "partial"
+        assert result.events_ingested >= 1
+
+        # errors_json must contain hr error
+        assert result.errors_json is not None
+        assert "hr" in result.errors_json
+        assert result.errors_json["hr"]["error"] is not None
+
+        # Other sources should not have errors
+        assert "jira" not in result.errors_json or result.errors_json["jira"]["error"] is None
+        assert "wiz" not in result.errors_json or result.errors_json["wiz"]["error"] is None
+        assert (
+            "crowdstrike" not in result.errors_json
+            or result.errors_json["crowdstrike"]["error"] is None
+        )
+        assert (
+            "vibranium" not in result.errors_json
+            or result.errors_json["vibranium"]["error"] is None
+        )
+
+
+@pytest.mark.integration
+async def test_errors_json_handles_datetime_payload(
+    session_factory: async_sessionmaker[AsyncSession],
+    mock_settings: Settings,
+    patch_get_settings: Any,
+) -> None:
+    """C2: errors_json coerces datetime and other non-JSON types to strings."""
+    with respx.mock:
+        # All sources: success with empty results
+        respx.post("https://jira.test/rest/api/3/search/jql").mock(
+            return_value=Response(200, json={"issues": []})
+        )
+        respx.post("https://wiz-auth.test/oauth/token").mock(
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
+        )
+        respx.post("https://wiz-api.test/graphql").mock(
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
+        )
+        respx.post("https://cs-api.test/oauth2/token").mock(
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
+        )
+        respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
+            return_value=Response(200, json={"resources": []})
+        )
+        respx.get("https://vibranium.test/incidents").mock(
+            return_value=Response(200, json={"data": [], "next_cursor": None})
+        )
+        respx.get("https://hr.test/employees").mock(
+            return_value=Response(200, json={"data": [], "next_cursor": None})
+        )
+
+        # Run pipeline (should not raise even if logs contain datetime/exception objects)
+        result = await run(session_factory, mock_settings)
+
+        # Verify status is ok and row is written
+        assert result.status == "ok"
+
+        # Verify coe_runs row was written with errors_json (even if empty/null)
+        async with session_factory() as session:
+            run_row = await session.get(CoeRun, result.run_id)
+            assert run_row is not None
+            # errors_json should be JSON-serializable (either None or a valid dict)
+            assert run_row.errors_json is None or isinstance(run_row.errors_json, dict)
