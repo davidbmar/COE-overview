@@ -297,3 +297,77 @@ class TestFetchUpdatedSince:
             assert issues[0].key == "SEC-1"
             # Verify we made 3 requests (2 failures, 1 success)
             assert len(route.calls) == 3
+
+    @pytest.mark.asyncio
+    async def test_since_iso_includes_timezone_and_second_precision(self) -> None:
+        """I3 + M4: JQL since timestamp includes timezone offset and second precision."""
+        since = datetime(2026, 5, 20, 14, 30, 45, tzinfo=UTC)
+        settings = Settings(
+            jira_base_url="https://capsule.atlassian.net",
+            jira_user_email="test@capsule.com",
+            jira_api_token="test_token",
+            jira_projects=["SEC"],
+        )
+
+        response_data = {"issues": [], "isLast": True}
+
+        async with respx.mock:
+            route = respx.post("https://capsule.atlassian.net/rest/api/3/search/jql").mock(
+                return_value=httpx.Response(200, json=response_data)
+            )
+
+            async for _ in fetch_updated_since(since, settings=settings):
+                pass
+
+            # Verify JQL contains the timestamp with timezone offset (+0000) and second precision
+            request = route.calls[0].request
+            body = request.content.decode()
+            # The timestamp should include seconds and timezone offset
+            assert "2026-05-20 14:30:45 +0000" in body
+            assert "updated >=" in body
+
+    @pytest.mark.asyncio
+    async def test_401_does_not_retry(self) -> None:
+        """M1: 401 AuthError does not retry (call_count == 1)."""
+        since = datetime(2026, 5, 20, 0, 0, 0, tzinfo=UTC)
+        settings = Settings(
+            jira_base_url="https://capsule.atlassian.net",
+            jira_user_email="test@capsule.com",
+            jira_api_token="bad_token",
+            jira_projects=["SEC"],
+        )
+
+        async with respx.mock:
+            route = respx.post("https://capsule.atlassian.net/rest/api/3/search/jql").mock(
+                return_value=httpx.Response(401, text="Unauthorized")
+            )
+
+            with pytest.raises(AuthError):
+                async for _ in fetch_updated_since(since, settings=settings):
+                    pass
+
+            # M1: Verify endpoint was called exactly once (no retries)
+            assert route.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_403_does_not_retry(self) -> None:
+        """M1: 403 AuthError does not retry (call_count == 1)."""
+        since = datetime(2026, 5, 20, 0, 0, 0, tzinfo=UTC)
+        settings = Settings(
+            jira_base_url="https://capsule.atlassian.net",
+            jira_user_email="test@capsule.com",
+            jira_api_token="bad_token",
+            jira_projects=["SEC"],
+        )
+
+        async with respx.mock:
+            route = respx.post("https://capsule.atlassian.net/rest/api/3/search/jql").mock(
+                return_value=httpx.Response(403, text="Forbidden")
+            )
+
+            with pytest.raises(AuthError):
+                async for _ in fetch_updated_since(since, settings=settings):
+                    pass
+
+            # M1: Verify endpoint was called exactly once (no retries)
+            assert route.call_count == 1

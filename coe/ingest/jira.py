@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -51,7 +51,9 @@ async def fetch_updated_since(
 
     # Build JQL filter
     projects_str = ", ".join(f'"{p}"' for p in settings.jira_projects)
-    since_iso = since.strftime("%Y-%m-%d %H:%M")
+    # Convert to UTC explicitly and format with second precision and timezone offset
+    since_utc = since.astimezone(UTC)
+    since_iso = since_utc.strftime("%Y-%m-%d %H:%M:%S %z")
     jql = f'project IN ({projects_str}) AND updated >= "{since_iso}"'
 
     # Build basic auth header
