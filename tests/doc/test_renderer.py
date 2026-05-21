@@ -302,32 +302,120 @@ class TestBuildRequestsWithSections:
             recently_resolved=[],
         )
 
+        # Pass deliberately non-default base URLs so this test verifies the
+        # settings → build_requests → link wiring (I-cycle2-new-C). If
+        # _get_source_url ever regresses to hardcoded defaults, these asserts
+        # will fail.
         requests = build_requests(
             "COE Prep",
             sections,
-            jira_base_url="https://capsule.atlassian.net",
-            vibranium_base_url="https://vibranium.internal",
+            jira_base_url="https://jira.nondefault.test",
+            vibranium_base_url="https://vibranium.nondefault.test",
         )
 
         # Find updateTextStyle requests (links)
         link_requests = [r for r in requests if "updateTextStyle" in r]
         assert len(link_requests) == 4, "Should have 4 link requests (one per event)"
 
-        # Collect the URLs
-        urls: list[str] = []
-        for req in link_requests:
-            url = req.get("updateTextStyle", {}).get("textStyle", {}).get("link", {}).get("url")
-            assert url is not None, f"Link request missing URL: {req}"
-            urls.append(url)
+        # Collect the URLs and assert direct equality (not substring tautology)
+        urls = [req["updateTextStyle"]["textStyle"]["link"]["url"] for req in link_requests]
 
-        # Verify URLs match expected patterns
-        assert any("capsule.atlassian.net/browse/SEC-123" in u for u in urls), (
-            "Missing Jira URL with SEC-123"
+        assert "https://jira.nondefault.test/browse/SEC-123" in urls
+        assert "https://app.wiz.io/issues/wiz-456" in urls
+        assert "https://falcon.crowdstrike.com/activity/detections/detail/cs-789" in urls
+        assert "https://vibranium.nondefault.test/incidents/vib-101" in urls
+
+    def test_multi_event_section_separates_lines_with_newline(self) -> None:
+        """Multiple events in one section must be separated by '\\n' bullets.
+
+        Regression test for C-cycle2-new-A: an earlier rewrite of build_requests
+        concatenated event lines directly, producing '[link]• [HIGH] ...' on a
+        single line. Verify the body contains a '\\n' between consecutive bullets.
+        """
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        event_a = CoeEvent(
+            id=1,
+            source=Source.JIRA,
+            source_id="SEC-1",
+            title="First event",
+            severity=CoeSeverity.CRITICAL,
+            status="open",
+            owner_email="alice@example.com",
+            sla_due_at=None,
+            opened_at=now,
+            updated_at=now,
+            raw={},
         )
-        assert any("app.wiz.io/issues/wiz-456" in u for u in urls), "Missing Wiz URL with wiz-456"
-        assert any("falcon.crowdstrike.com/activity/detections/detail/cs-789" in u for u in urls), (
-            "Missing CrowdStrike URL with cs-789"
+        event_b = CoeEvent(
+            id=2,
+            source=Source.JIRA,
+            source_id="SEC-2",
+            title="Second event",
+            severity=CoeSeverity.HIGH,
+            status="open",
+            owner_email="bob@example.com",
+            sla_due_at=None,
+            opened_at=now,
+            updated_at=now,
+            raw={},
         )
-        assert any("vibranium.internal/incidents/vib-101" in u for u in urls), (
-            "Missing Vibranium URL with vib-101"
+
+        sections = DocSections(
+            new=[event_a, event_b],
+            changed=[],
+            missing_owner=[],
+            missing_sla=[],
+            recently_resolved=[],
         )
+
+        requests = build_requests("COE Prep", sections)
+
+        # The inserted body is in the first insertText request.
+        body = requests[0]["insertText"]["text"]
+        assert "First event" in body
+        assert "Second event" in body
+        # Sanity: the two bullets must not be smushed together.
+        assert "[link]• [HIGH]" not in body, (
+            "Consecutive event bullets must be separated by a newline"
+        )
+        assert "[link]\n• [HIGH]" in body, "Expected '\\n' between consecutive event bullets"
+
+    def test_multi_event_link_indices_still_correct(self) -> None:
+        """After the multi-event newline fix, link ranges must still slice to '[link]'.
+
+        Companion to the regression above: ensures the cursor math accounts for the
+        inter-event '\\n' so each updateTextStyle.link range still covers exactly
+        the '[link]' token.
+        """
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        events = [
+            CoeEvent(
+                id=i,
+                source=Source.JIRA,
+                source_id=f"SEC-{i}",
+                title=f"Event {i}",
+                severity=CoeSeverity.HIGH,
+                status="open",
+                owner_email="x@example.com",
+                sla_due_at=None,
+                opened_at=now,
+                updated_at=now,
+                raw={},
+            )
+            for i in range(1, 4)
+        ]
+        sections = DocSections(
+            new=events, changed=[], missing_owner=[], missing_sla=[], recently_resolved=[]
+        )
+        requests = build_requests("COE Prep", sections)
+        body = requests[0]["insertText"]["text"]
+        link_requests = [r for r in requests if "updateTextStyle" in r]
+        assert len(link_requests) == 3
+        for req in link_requests:
+            r = req["updateTextStyle"]["range"]
+            slice_ = body[r["startIndex"] - 1 : r["endIndex"] - 1]
+            assert slice_ == "[link]", f"Link range slice was {slice_!r}, expected '[link]'"

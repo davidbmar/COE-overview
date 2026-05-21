@@ -10,7 +10,7 @@ AC4.4: Structured error handling for API failures.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, assert_never
 
 import structlog
 from sqlalchemy import select
@@ -67,9 +67,9 @@ def build_requests(
     cursor += len(title)
     title_end = cursor
 
-    # Blank line after title
-    body_parts.append("\n")
-    cursor += 1
+    # Blank line after title (\n\n separates title from first H2 with one blank line)
+    body_parts.append("\n\n")
+    cursor += 2
 
     # Helper to add a section with tracking
     def add_section(heading: str, events: list[Any]) -> None:
@@ -91,7 +91,7 @@ def build_requests(
             body_parts.append("No events")
             cursor += len("No events")
         else:
-            for event in events:
+            for idx, event in enumerate(events):
                 severity_str = event.severity.value if event.severity else "UNKNOWN"
                 owner_str = event.owner_email or "unassigned"
                 sla_str = event.sla_due_at.strftime("%Y-%m-%d") if event.sla_due_at else "none"
@@ -102,6 +102,12 @@ def build_requests(
                 line_start = cursor
                 body_parts.append(line)
                 cursor += len(line)
+
+                # Separate consecutive event lines with a newline (omit after the last
+                # event so the section-trailing newline below isn't duplicated).
+                if idx < len(events) - 1:
+                    body_parts.append("\n")
+                    cursor += 1
 
                 # Record link position (absolute in body)
                 link_abs_start = line_start + link_token_pos
@@ -229,9 +235,6 @@ def _get_source_url(
         return f"{vibranium_base_url}/incidents/{source_id}"
     else:
         # Source is a closed enum, so this should never happen.
-        # Use assert_never to make the type checker aware.
-        from typing import assert_never
-
         assert_never(source)
 
 

@@ -530,12 +530,16 @@ async def test_ac4_4_api_failure_no_db_mutation(
         now = datetime.now(UTC)
         since = now - timedelta(days=7)
 
-        # Create a coe_runs row
+        # Create a coe_runs row with a pre-existing doc_url. The "OLD" sentinel
+        # lets the test distinguish "renderer didn't write doc_url" from
+        # "renderer wrote None / silently rolled back".
+        old_doc_url = "https://docs.google.com/document/d/OLD/edit"
         run = CoeRun(
             since=since,
             started_at=now,
             status="ok",
             events_ingested=1,
+            doc_url=old_doc_url,
         )
         session.add(run)
         await session.flush()
@@ -565,7 +569,7 @@ async def test_ac4_4_api_failure_no_db_mutation(
         # I3: Capture initial state before rendering
         initial_run_result = await session.execute(select(CoeRun).where(CoeRun.id == run_id))
         initial_run = initial_run_result.scalar_one()
-        assert initial_run.doc_url is None  # Verify pre-condition
+        assert initial_run.doc_url == old_doc_url  # Verify pre-condition
 
         # Get initial state of coe_events
         initial_event_result = await session.execute(select(CoeEvent))
@@ -603,8 +607,8 @@ async def test_ac4_4_api_failure_no_db_mutation(
             result = await fresh_session.execute(select(CoeRun).where(CoeRun.id == run_id))
             run_check = result.scalar_one()
 
-            assert run_check.doc_url is None, (
-                "coe_runs.doc_url should remain None after API failure"
+            assert run_check.doc_url == old_doc_url, (
+                "coe_runs.doc_url should remain unchanged after API failure"
             )
 
             # I3: Verify coe_events rows are unchanged (updated_at byte-identical)
