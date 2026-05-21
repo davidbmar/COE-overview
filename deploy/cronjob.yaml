@@ -1,0 +1,100 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coe-overview
+  labels:
+    app: coe-overview
+spec:
+  schedule: "0 9 * * 1"          # 9am Monday
+  timeZone: "America/New_York"   # K8s 1.27+
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 604800   # 7 days
+      template:
+        metadata:
+          labels:
+            app: coe-overview
+        spec:
+          restartPolicy: OnFailure
+          # Stage 0: apply migrations before any data is read or written
+          initContainers:
+            - name: migrate
+              image: ghcr.io/REPLACE_WITH_OWNER/coe-overview:latest
+              imagePullPolicy: Always
+              command: ["alembic", "upgrade", "head"]
+              envFrom:
+                - configMapRef: { name: coe-config }
+                - secretRef:    { name: coe-secrets }
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
+              resources:
+                requests: { cpu: "100m", memory: "128Mi" }
+                limits:   { cpu: "500m", memory: "256Mi" }
+            # Stage 1: ingest, must succeed before render starts
+            - name: ingest
+              image: ghcr.io/REPLACE_WITH_OWNER/coe-overview:latest
+              imagePullPolicy: Always
+              args: []                          # uses Dockerfile ENTRYPOINT
+              envFrom:
+                - configMapRef: { name: coe-config }
+                - secretRef:    { name: coe-secrets }
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
+                - name: COE_RUN_ID_PATH
+                  value: /var/run/coe/last_run_id
+              volumeMounts:
+                - name: google-sa
+                  mountPath: /var/run/secrets/google
+                  readOnly: true
+                - name: run-handoff
+                  mountPath: /var/run/coe
+              resources:
+                requests: { cpu: "250m", memory: "512Mi" }
+                limits:   { cpu: "1",    memory: "1Gi"   }
+          # Stage 2: render doc — runs only if migrate AND ingest exited 0
+          containers:
+            - name: render
+              image: ghcr.io/REPLACE_WITH_OWNER/coe-overview:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "coe.doc"]
+              envFrom:
+                - configMapRef: { name: coe-config }
+                - secretRef:    { name: coe-secrets }
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
+                - name: GOOGLE_SERVICE_ACCOUNT_FILE
+                  value: /var/run/secrets/google/service-account.json
+                - name: COE_RUN_ID_PATH
+                  value: /var/run/coe/last_run_id
+              volumeMounts:
+                - name: google-sa
+                  mountPath: /var/run/secrets/google
+                  readOnly: true
+                - name: run-handoff
+                  mountPath: /var/run/coe
+                  readOnly: true
+              resources:
+                requests: { cpu: "100m", memory: "256Mi" }
+                limits:   { cpu: "500m", memory: "512Mi" }
+          volumes:
+            - name: google-sa
+              secret:
+                secretName: coe-google-sa
+                items:
+                  - key: service-account.json
+                    path: service-account.json
+            # Shared emptyDir for run_id handoff between ingest and render.
+            # Ingest writes /var/run/coe/last_run_id; render reads it.
+            - name: run-handoff
+              emptyDir: {}
