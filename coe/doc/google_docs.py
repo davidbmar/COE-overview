@@ -42,7 +42,7 @@ def build_clients_from_file(service_account_file: str) -> DocsClient:
     Returns:
         DocsClient with authenticated drive and docs services.
     """
-    creds = service_account.Credentials.from_service_account_file(
+    creds = service_account.Credentials.from_service_account_file(  # type: ignore[no-untyped-call,unused-ignore]
         service_account_file, scopes=list(SCOPES)
     )
     return DocsClient(
