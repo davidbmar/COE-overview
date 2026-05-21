@@ -15,7 +15,7 @@ from coe.config import get_settings
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Fixture: create an AsyncSession with transaction per test.
 
-    Each test runs in its own transaction which deletes all employees
+    Each test runs in its own transaction which cleans all mutable tables
     before and after the test, providing test isolation.
     """
     engine = create_async_engine(get_settings().database_url)
@@ -28,12 +28,22 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 expire_on_commit=False,
             )
             try:
-                # Clean slate: delete all employees at start of test
-                await session.execute(text("DELETE FROM employees"))
+                # Clean slate: truncate all mutable tables at start of test
+                await session.execute(
+                    text(
+                        "TRUNCATE coe_events, coe_runs, employees, "
+                        "jira_raw, wiz_raw, crowdstrike_raw, vibranium_raw CASCADE"
+                    )
+                )
                 await session.commit()
                 yield session
-                # Clean slate: delete all employees at end of test
-                await session.execute(text("DELETE FROM employees"))
+                # Clean slate: truncate all mutable tables at end of test
+                await session.execute(
+                    text(
+                        "TRUNCATE coe_events, coe_runs, employees, "
+                        "jira_raw, wiz_raw, crowdstrike_raw, vibranium_raw CASCADE"
+                    )
+                )
                 await session.commit()
             finally:
                 # Rollback at end (implicitly done by engine.begin())

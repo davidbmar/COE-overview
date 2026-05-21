@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+asyncpg://coe:coe@localhost:5432/coe"
+    bootstrap_lookback_days: int = 90
 
     # Jira ingest settings
     jira_base_url: str = "https://capsule.atlassian.net"
