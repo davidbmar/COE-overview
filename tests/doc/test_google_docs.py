@@ -80,7 +80,7 @@ class TestCreateDoc:
 
     @pytest.mark.asyncio
     async def test_create_doc_403_raises_google_docs_error(self) -> None:
-        """create_doc raises GoogleDocsError on 403 from drive API."""
+        """I2: create_doc raises GoogleDocsError on 403 from drive API with message."""
         mock_drive = mock.MagicMock()
         mock_resp = mock.MagicMock()
         mock_resp.status = 403
@@ -93,10 +93,12 @@ class TestCreateDoc:
             await create_doc(client, "Test Doc", "folder-id")
 
         assert exc_info.value.status == 403
+        # I2: Verify error message contains expected content
+        assert "[google-docs 403]" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_create_doc_500_raises_google_docs_error(self) -> None:
-        """create_doc raises GoogleDocsError on 500 from drive API."""
+        """I2: create_doc raises GoogleDocsError on 500 from drive API with message."""
         mock_drive = mock.MagicMock()
         mock_resp = mock.MagicMock()
         mock_resp.status = 500
@@ -109,6 +111,8 @@ class TestCreateDoc:
             await create_doc(client, "Test Doc", "folder-id")
 
         assert exc_info.value.status == 500
+        # I2: Verify error message contains expected content
+        assert "[google-docs 500]" in str(exc_info.value)
 
 
 class TestBatchUpdate:
@@ -153,7 +157,7 @@ class TestBatchUpdate:
 
     @pytest.mark.asyncio
     async def test_batch_update_403_raises_google_docs_error(self) -> None:
-        """batch_update raises GoogleDocsError on 403 from docs API."""
+        """I2: batch_update raises GoogleDocsError on 403 from docs API with message."""
         mock_docs = mock.MagicMock()
         mock_resp = mock.MagicMock()
         mock_resp.status = 403
@@ -167,10 +171,12 @@ class TestBatchUpdate:
             await batch_update(client, "doc-id", requests)
 
         assert exc_info.value.status == 403
+        # I2: Verify error message contains expected content
+        assert "[google-docs 403]" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_batch_update_500_raises_google_docs_error(self) -> None:
-        """batch_update raises GoogleDocsError on 500 from docs API."""
+        """I2: batch_update raises GoogleDocsError on 500 from docs API with message."""
         mock_docs = mock.MagicMock()
         mock_resp = mock.MagicMock()
         mock_resp.status = 500
@@ -184,6 +190,8 @@ class TestBatchUpdate:
             await batch_update(client, "doc-id", requests)
 
         assert exc_info.value.status == 500
+        # I2: Verify error message contains expected content
+        assert "[google-docs 500]" in str(exc_info.value)
 
 
 class TestBuildClientsFromFile:

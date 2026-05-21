@@ -152,8 +152,9 @@ async def test_ac4_1_full_section_coverage(
 
         await session.commit()
 
-        # Capture calls to batch_update
+        # Capture calls to batch_update and create_doc
         batch_update_calls: list[tuple[Any, ...]] = []
+        create_doc_calls: list[tuple[str, str]] = []
 
         async def mock_batch_update(
             client: Any, document_id: str, requests: list[dict[str, Any]]
@@ -161,6 +162,7 @@ async def test_ac4_1_full_section_coverage(
             batch_update_calls.append((client, document_id, requests))
 
         async def mock_create_doc(client: Any, name: str, folder_id: str) -> str:
+            create_doc_calls.append((name, folder_id))
             return "abc123"
 
         monkeypatch.setattr("coe.doc.renderer.create_doc", mock_create_doc)
@@ -178,6 +180,16 @@ async def test_ac4_1_full_section_coverage(
 
         # 1. URL matches expected shape
         assert url == "https://docs.google.com/document/d/abc123/edit"
+
+        # I5: Verify create_doc was called with correct parameters
+        assert len(create_doc_calls) == 1
+        doc_name, folder_id = create_doc_calls[0]
+        # Name should be "COE Prep — Week of YYYY-MM-DD" derived from run.started_at
+        expected_name = f"COE Prep — Week of {run.started_at:%Y-%m-%d}"
+        assert doc_name == expected_name, f"Expected doc name '{expected_name}', got '{doc_name}'"
+        assert folder_id == settings.google_drive_folder_id, (
+            f"Expected folder_id '{settings.google_drive_folder_id}', got '{folder_id}'"
+        )
 
         # 2. batch_update was called once
         assert len(batch_update_calls) == 1
@@ -313,8 +325,9 @@ async def test_ac4_2_source_links(
 
         await session.commit()
 
-        # Capture calls to batch_update
+        # Capture calls to batch_update and create_doc
         batch_update_calls: list[tuple[Any, ...]] = []
+        create_doc_calls: list[tuple[str, str]] = []
 
         async def mock_batch_update(
             client: Any, document_id: str, requests: list[dict[str, Any]]
@@ -322,6 +335,7 @@ async def test_ac4_2_source_links(
             batch_update_calls.append((client, document_id, requests))
 
         async def mock_create_doc(client: Any, name: str, folder_id: str) -> str:
+            create_doc_calls.append((name, folder_id))
             return "abc123"
 
         monkeypatch.setattr("coe.doc.renderer.create_doc", mock_create_doc)
@@ -334,6 +348,13 @@ async def test_ac4_2_source_links(
         # Call render_weekly_doc
         settings = get_settings()
         await render_weekly_doc(session, settings, run_id)
+
+        # I5: Verify create_doc was called with correct parameters
+        assert len(create_doc_calls) == 1
+        doc_name, folder_id = create_doc_calls[0]
+        expected_name = f"COE Prep — Week of {run.started_at:%Y-%m-%d}"
+        assert doc_name == expected_name
+        assert folder_id == settings.google_drive_folder_id
 
         # Extract requests from batch_update call
         assert len(batch_update_calls) == 1
@@ -437,8 +458,9 @@ async def test_ac4_3_missing_owner_precedence(
 
         await session.commit()
 
-        # Capture calls to batch_update
+        # Capture calls to batch_update and create_doc
         batch_update_calls: list[tuple[Any, ...]] = []
+        create_doc_calls: list[tuple[str, str]] = []
 
         async def mock_batch_update(
             client: Any, document_id: str, requests: list[dict[str, Any]]
@@ -446,6 +468,7 @@ async def test_ac4_3_missing_owner_precedence(
             batch_update_calls.append((client, document_id, requests))
 
         async def mock_create_doc(client: Any, name: str, folder_id: str) -> str:
+            create_doc_calls.append((name, folder_id))
             return "abc123"
 
         monkeypatch.setattr("coe.doc.renderer.create_doc", mock_create_doc)
@@ -458,6 +481,13 @@ async def test_ac4_3_missing_owner_precedence(
         # Call render_weekly_doc
         settings = get_settings()
         await render_weekly_doc(session, settings, run_id)
+
+        # I5: Verify create_doc was called with correct parameters
+        assert len(create_doc_calls) == 1
+        doc_name, folder_id = create_doc_calls[0]
+        expected_name = f"COE Prep — Week of {run.started_at:%Y-%m-%d}"
+        assert doc_name == expected_name
+        assert folder_id == settings.google_drive_folder_id
 
         # Extract text
         assert len(batch_update_calls) == 1
@@ -532,9 +562,17 @@ async def test_ac4_4_api_failure_no_db_mutation(
         session.add(event)
         await session.commit()
 
-        # Get initial count of coe_events
+        # I3: Capture initial state before rendering
+        initial_run_result = await session.execute(select(CoeRun).where(CoeRun.id == run_id))
+        initial_run = initial_run_result.scalar_one()
+        assert initial_run.doc_url is None  # Verify pre-condition
+
+        # Get initial state of coe_events
         initial_event_result = await session.execute(select(CoeEvent))
-        initial_event_count = len(initial_event_result.scalars().all())
+        initial_events = {
+            e.id: (e.updated_at, e.title) for e in initial_event_result.scalars().all()
+        }
+        initial_event_count = len(initial_events)
 
         # Mock batch_update to raise GoogleDocsError
         async def mock_batch_update_fail(
@@ -561,17 +599,28 @@ async def test_ac4_4_api_failure_no_db_mutation(
 
         # Create fresh session to check DB state was not mutated
         async with session_factory() as fresh_session:
+            # I3: Verify coe_runs.doc_url is unchanged (still NULL/None)
             result = await fresh_session.execute(select(CoeRun).where(CoeRun.id == run_id))
             run_check = result.scalar_one()
 
-            # Verify doc_url is still None
             assert run_check.doc_url is None, (
                 "coe_runs.doc_url should remain None after API failure"
             )
 
-            # Verify event count unchanged
+            # I3: Verify coe_events rows are unchanged (updated_at byte-identical)
             event_result = await fresh_session.execute(select(CoeEvent))
-            current_event_count = len(event_result.scalars().all())
-            assert current_event_count == initial_event_count, (
+            current_events = {e.id: (e.updated_at, e.title) for e in event_result.scalars().all()}
+
+            assert len(current_events) == initial_event_count, (
                 "coe_events count should be unchanged after API failure"
             )
+
+            for event_id, (initial_ts, initial_title) in initial_events.items():
+                assert event_id in current_events, f"Event {event_id} disappeared"
+                current_ts, current_title = current_events[event_id]
+                assert current_ts == initial_ts, (
+                    f"Event {event_id} updated_at changed after API failure"
+                )
+                assert current_title == initial_title, (
+                    f"Event {event_id} title changed after API failure"
+                )
