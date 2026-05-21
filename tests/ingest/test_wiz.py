@@ -342,7 +342,7 @@ class TestFetchUpdatedSince:
             respx.post("https://auth.wiz.io/oauth/token").mock(
                 return_value=httpx.Response(200, json=token_response)
             )
-            respx.post("https://api.wiz.io/graphql").mock(
+            graphql_route = respx.post("https://api.wiz.io/graphql").mock(
                 return_value=httpx.Response(401, text="Unauthorized")
             )
 
@@ -352,6 +352,8 @@ class TestFetchUpdatedSince:
 
             assert exc_info.value.source == "wiz"
             assert "401" in exc_info.value.message
+            # M1: Verify no retries (call_count == 1)
+            assert graphql_route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_5xx_retried_then_succeeds(self) -> None:

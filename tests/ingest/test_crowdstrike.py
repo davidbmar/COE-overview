@@ -340,7 +340,7 @@ class TestFetchUpdatedSince:
             )
 
             # Mock IDs endpoint with 401
-            respx.get("https://api.crowdstrike.com/detects/queries/detects/v1").mock(
+            ids_route = respx.get("https://api.crowdstrike.com/detects/queries/detects/v1").mock(
                 return_value=httpx.Response(401, json={"error": "Unauthorized"})
             )
 
@@ -348,6 +348,8 @@ class TestFetchUpdatedSince:
                 _ = [detect async for detect in fetch_updated_since(since, settings)]
 
             assert exc_info.value.source == "crowdstrike"
+            # M1: Verify no retries (call_count == 1)
+            assert ids_route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_5xx_with_retry_after_is_retried(self) -> None:

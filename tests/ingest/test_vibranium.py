@@ -231,7 +231,7 @@ class TestFetchUpdatedSince:
         )
 
         async with respx.mock:
-            respx.get("https://internal.example.com/vibranium/incidents").mock(
+            route = respx.get("https://internal.example.com/vibranium/incidents").mock(
                 return_value=httpx.Response(401, json={"error": "Unauthorized"})
             )
 
@@ -239,6 +239,8 @@ class TestFetchUpdatedSince:
                 _ = [incident async for incident in fetch_updated_since(since, settings)]
 
             assert exc_info.value.source == "vibranium"
+            # M1: Verify no retries (call_count == 1)
+            assert route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_403_raises_auth_error(self) -> None:
@@ -250,7 +252,7 @@ class TestFetchUpdatedSince:
         )
 
         async with respx.mock:
-            respx.get("https://internal.example.com/vibranium/incidents").mock(
+            route = respx.get("https://internal.example.com/vibranium/incidents").mock(
                 return_value=httpx.Response(403, json={"error": "Forbidden"})
             )
 
@@ -258,6 +260,8 @@ class TestFetchUpdatedSince:
                 _ = [incident async for incident in fetch_updated_since(since, settings)]
 
             assert exc_info.value.source == "vibranium"
+            # M1: Verify no retries (call_count == 1)
+            assert route.call_count == 1
 
     @pytest.mark.asyncio
     async def test_5xx_retried_and_final_failure_raises_transient_error(self) -> None:
