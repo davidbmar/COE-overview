@@ -20,6 +20,10 @@ repos:
     rev: v1.11.0
     hooks:
       - id: mypy
-        additional_dependencies: ["pydantic", "sqlalchemy[mypy]"]
+        additional_dependencies:
+          - "pydantic"
+          - "pydantic-settings"
+          - "sqlalchemy[mypy]"
+          - "alembic"
         args: ["--ignore-missing-imports"]
         exclude: "^alembic/versions/"

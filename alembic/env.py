@@ -5,11 +5,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import coe.db.models  # noqa: F401  # ensures models register with Base.metadata
 from alembic import context
-
 from coe.config import get_settings
 from coe.db.base import Base
-import coe.db.models  # noqa: F401  # ensures models register with Base.metadata
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
@@ -40,6 +39,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     url = config.get_main_option("sqlalchemy.url")
+    assert url is not None  # set above from get_settings().database_url
     engine = create_async_engine(url, poolclass=pool.NullPool)
     async with engine.connect() as connection:
         await connection.run_sync(do_run_migrations)

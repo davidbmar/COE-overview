@@ -23,6 +23,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "respx>=0.21.0",
     "testcontainers[postgres]>=4.7.0",
+    "pre-commit>=3.7.0",
 ]
 
 [build-system]
