@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coe-config
+data:
+  BOOTSTRAP_LOOKBACK_DAYS: "90"
+  JIRA_BASE_URL: "https://capsule.atlassian.net"
+  JIRA_PROJECTS: "SEC,OPS"           # update to match your COE scope
+  WIZ_API_URL: "https://api.us.wiz.io/graphql"
+  WIZ_AUTH_URL: "https://auth.app.wiz.io/oauth/token"
+  CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
+  VIBRANIUM_BASE_URL: "https://vibranium.internal.capsule.com"
+  HR_BASE_URL: "https://hr-api.internal.capsule.com"
+  GOOGLE_DRIVE_FOLDER_ID: "REPLACE_WITH_FOLDER_ID"
