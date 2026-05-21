@@ -6,13 +6,45 @@ Provides session-scoped database fixtures that use the local Postgres instance
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from coe.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _mock_asyncio_sleep_for_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto-use fixture: monkeypatch asyncio.sleep to a no-op.
+
+    This prevents retry tests (especially test_ac3_4_hr_failure_isolation and
+    test_ac3_4_transient_error) from sleeping through full exponential backoff,
+    reducing pipeline test suite runtime from 30-40s per test to near-instant.
+    Tests can explicitly capture sleep durations from the mock if needed.
+    """
+    async_mock = AsyncMock()
+    monkeypatch.setattr("coe.ingest.base.asyncio.sleep", async_mock)
+
+
+@pytest.fixture(autouse=True)
+def _clear_token_caches() -> Generator[None, None, None]:
+    """Auto-use fixture: clear Wiz and CrowdStrike token caches between tests.
+
+    Prevents tests from leaking state via module-level _token_cache dicts,
+    ensuring cache misses in each test (simulating real behavior).
+    """
+    from coe.ingest import crowdstrike, wiz
+
+    # Clear before test
+    wiz._clear_token_cache()
+    crowdstrike._clear_token_cache()
+    yield
+    # Clear after test
+    wiz._clear_token_cache()
+    crowdstrike._clear_token_cache()
 
 
 @pytest.fixture(scope="session")

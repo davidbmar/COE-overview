@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from coe.config import Settings
 from coe.db.models import CoeEvent, CoeRun
+from coe.db.runs import finish_run
 from coe.pipeline import run
 
 
@@ -691,58 +692,75 @@ async def test_ac3_4_hr_failure_isolation(
         )
 
 
-@pytest.mark.integration
 async def test_errors_json_handles_datetime_payload(
     session_factory: async_sessionmaker[AsyncSession],
-    mock_settings: Settings,
-    patch_get_settings: Any,
 ) -> None:
-    """C2: errors_json coerces datetime and other non-JSON types to strings."""
-    with respx.mock:
-        # All sources: success with empty results
-        respx.post("https://jira.test/rest/api/3/search/jql").mock(
-            return_value=Response(200, json={"issues": []})
+    """C2: finish_run coerces datetime and other non-JSON types to strings.
+
+    Focused unit test that directly calls finish_run with a datetime-laden
+    errors_json to verify the json.dumps(default=str) coercion happens
+    at the write boundary, not just one caller.
+
+    Without the coercion in finish_run, this test would fail with:
+        TypeError: Object of type datetime is not JSON serializable
+    """
+    from coe.db.runs import start_run
+
+    # Setup: insert a coe_runs row via start_run
+    async with session_factory() as session:
+        settings = Settings(
+            database_url="postgresql+asyncpg://coe:coe@localhost:5432/coe",
+            bootstrap_lookback_days=90,
+            jira_base_url="https://jira.test",
+            jira_user_email="test@test.com",
+            jira_api_token="test",
+            jira_projects=["TEST"],
+            wiz_client_id="test",
+            wiz_client_secret="test",
+            wiz_api_url="https://wiz.test",
+            wiz_auth_url="https://wiz-auth.test",
+            crowdstrike_client_id="test",
+            crowdstrike_client_secret="test",
+            crowdstrike_base_url="https://cs.test",
+            vibranium_base_url="https://vibranium.test",
+            vibranium_api_token="test",
+            hr_base_url="https://hr.test",
+            hr_api_token="test",
         )
-        respx.post("https://wiz-auth.test/oauth/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
-        )
-        respx.post("https://wiz-api.test/graphql").mock(
-            return_value=Response(
-                200,
-                json={
-                    "data": {
-                        "issues": {
-                            "pageInfo": {"hasNextPage": False, "endCursor": None},
-                            "nodes": [],
-                        }
-                    }
-                },
-            )
-        )
-        respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(
-                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
-            )
-        )
-        respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
-            return_value=Response(200, json={"resources": []})
-        )
-        respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"data": [], "next_cursor": None})
-        )
-        respx.get("https://hr.test/employees").mock(
-            return_value=Response(200, json={"data": [], "next_cursor": None})
+        ctx = await start_run(session, settings)
+
+    # Build errors_json with datetime and other non-JSON-safe types
+    error_with_datetime = {
+        "jira": {
+            "error": "Test error",
+            "warnings": [
+                {
+                    "event": "normalize-failed",
+                    "timestamp": datetime.now(UTC),  # datetime object
+                    "source_id": "ABC-1",
+                }
+            ],
+        }
+    }
+
+    # Call finish_run directly with datetime-laden errors_json
+    # This should NOT raise TypeError; finish_run must coerce to strings
+    async with session_factory() as session:
+        await finish_run(
+            session,
+            ctx.run_id,
+            status="partial",
+            events_ingested=0,
+            errors_json=error_with_datetime,
         )
 
-        # Run pipeline (should not raise even if logs contain datetime/exception objects)
-        result = await run(session_factory, mock_settings)
-
-        # Verify status is ok and row is written
-        assert result.status == "ok"
-
-        # Verify coe_runs row was written with errors_json (even if empty/null)
-        async with session_factory() as session:
-            run_row = await session.get(CoeRun, result.run_id)
-            assert run_row is not None
-            # errors_json should be JSON-serializable (either None or a valid dict)
-            assert run_row.errors_json is None or isinstance(run_row.errors_json, dict)
+    # Verify: the datetime was coerced to a string
+    async with session_factory() as session:
+        run_row = await session.get(CoeRun, ctx.run_id)
+        assert run_row is not None
+        assert run_row.errors_json is not None
+        assert isinstance(run_row.errors_json, dict)
+        # The timestamp should now be a string, not a datetime
+        assert isinstance(run_row.errors_json["jira"]["warnings"][0]["timestamp"], str), (
+            "datetime should have been coerced to string"
+        )
