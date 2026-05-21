@@ -17,5 +17,9 @@ htmlcov/
 .env
 .env.local
 
+# K8s secrets — never commit (defense-in-depth; deploy/.gitignore also blocks this)
+secret.yaml
+**/secret.yaml
+
 # OS
 .DS_Store

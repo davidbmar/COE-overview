@@ -6,7 +6,7 @@ metadata:
     app: coe-overview
 spec:
   schedule: "0 9 * * 1"          # 9am Monday
-  timeZone: "America/New_York"   # K8s 1.27+
+  timeZone: "America/New_York"   # K8s 1.27+; silently ignored on older clusters
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 600
   successfulJobsHistoryLimit: 3
@@ -21,6 +21,14 @@ spec:
             app: coe-overview
         spec:
           restartPolicy: OnFailure
+          # If pulling from a private GHCR repo, create a docker-registry
+          # secret and uncomment imagePullSecrets below. See deploy/README.md.
+          # imagePullSecrets:
+          #   - name: ghcr-creds
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: { type: RuntimeDefault }
           # Stage 0: apply migrations before any data is read or written
           initContainers:
             - name: migrate
@@ -30,27 +38,28 @@ spec:
               envFrom:
                 - configMapRef: { name: coe-config }
                 - secretRef:    { name: coe-secrets }
-              env:
-                - name: DATABASE_URL
-                  valueFrom:
-                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
               resources:
                 requests: { cpu: "100m", memory: "128Mi" }
                 limits:   { cpu: "500m", memory: "256Mi" }
-            # Stage 1: ingest, must succeed before render starts
+            # Stage 1: ingest, must succeed before render starts.
+            # No `args:` field — image ENTRYPOINT is `python -m coe`.
             - name: ingest
               image: ghcr.io/REPLACE_WITH_OWNER/coe-overview:latest
               imagePullPolicy: Always
-              args: []                          # uses Dockerfile ENTRYPOINT
               envFrom:
                 - configMapRef: { name: coe-config }
                 - secretRef:    { name: coe-secrets }
               env:
-                - name: DATABASE_URL
-                  valueFrom:
-                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
                 - name: COE_RUN_ID_PATH
                   value: /var/run/coe/last_run_id
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
               volumeMounts:
                 - name: google-sa
                   mountPath: /var/run/secrets/google
@@ -70,13 +79,14 @@ spec:
                 - configMapRef: { name: coe-config }
                 - secretRef:    { name: coe-secrets }
               env:
-                - name: DATABASE_URL
-                  valueFrom:
-                    secretKeyRef: { name: coe-secrets, key: DATABASE_URL }
                 - name: GOOGLE_SERVICE_ACCOUNT_FILE
                   value: /var/run/secrets/google/service-account.json
                 - name: COE_RUN_ID_PATH
                   value: /var/run/coe/last_run_id
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
               volumeMounts:
                 - name: google-sa
                   mountPath: /var/run/secrets/google

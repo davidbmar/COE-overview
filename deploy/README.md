@@ -79,8 +79,9 @@ The ingest and render stages require a Google service account with access to you
    - Grant **Editor** permissions
 
 3. **Add to secret:**
-   - Copy the entire JSON key file content
-   - Paste it into the `service-account.json` field in `deploy/secret.yaml` (uncomment and format it as a YAML string or keep it on one line with escaped newlines)
+   - Copy the entire JSON key file content.
+   - Paste it into the `service-account.json` field of the **second** `Secret` (`coe-google-sa`) in `deploy/secret.yaml` — NOT into `coe-secrets`. The two-Secret split keeps the SA JSON file-mounted at `/var/run/secrets/google/service-account.json` while the API tokens remain envFrom-injected.
+   - Use a YAML block scalar (`|`) so newlines in the JSON are preserved verbatim, as shown in `secret.example.yaml`.
 
 ## Jira API Token
 
@@ -150,12 +151,29 @@ Check that:
 ### Image pull errors
 Ensure:
 1. The image repository placeholder was replaced with your actual GHCR namespace
-2. Your cluster has credentials to pull from GHCR (may require imagePullSecrets)
+2. Your cluster has credentials to pull from GHCR. For a private GHCR repo:
+   ```bash
+   # Create a personal-access token with read:packages scope at
+   # https://github.com/settings/tokens, then:
+   kubectl create secret docker-registry ghcr-creds \
+     --docker-server=ghcr.io \
+     --docker-username=<github-username> \
+     --docker-password=<PAT> \
+     -n coe
+   ```
+   Then uncomment the `imagePullSecrets:` block in `deploy/cronjob.yaml`
+   (it points at `ghcr-creds`).
 3. The image has been built and pushed to GHCR (via the CI/CD pipeline on merge to main)
 
 ## CronJob Schedule
 
 The default schedule is `0 9 * * 1` (9 AM every Monday in America/New_York timezone).
+
+> **Requires Kubernetes 1.27+** for the `spec.timeZone` field. On older clusters
+> the field is silently ignored and the schedule runs in the kube-controller-manager's
+> local timezone (typically UTC) — meaning the job would fire 4–5 hours off. If
+> you're on an older cluster, remove `timeZone` and convert your intended time
+> to UTC in `spec.schedule` directly.
 
 To adjust:
 1. Edit the `spec.schedule` field in `deploy/cronjob.yaml`
