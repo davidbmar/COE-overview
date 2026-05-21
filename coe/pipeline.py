@@ -11,7 +11,7 @@ Implements a single end-to-end run that:
 from __future__ import annotations
 
 import asyncio
-import json
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -170,7 +170,7 @@ async def _run_source(
                 return SourceResult(source, ingested, error=None, log_events=list(logs))
 
             except Exception as exc:
-                log.exception("source-failed", source=source.value)
+                log.exception("source-failed")
                 return SourceResult(source, 0, error=str(exc), log_events=list(logs))
         finally:
             structlog.contextvars.unbind_contextvars("source")
@@ -210,18 +210,19 @@ async def run(
     try:
         with CaptureLogsCtx() as hr_logs:
             structlog.contextvars.bind_contextvars(source="hr")
-            async with session_factory() as session:
-                employees = []
-                async for emp in fetch_all_active_employees(settings):
-                    employees.append(emp)
-                await upsert_employees(session, employees)
-                await session.commit()
-            structlog.contextvars.unbind_contextvars("source")
-        hr_warnings = list(hr_logs)
+            try:
+                async with session_factory() as session:
+                    employees = []
+                    async for emp in fetch_all_active_employees(settings):
+                        employees.append(emp)
+                    await upsert_employees(session, employees)
+                    await session.commit()
+                hr_warnings = list(hr_logs)
+            finally:
+                structlog.contextvars.unbind_contextvars("source")
     except Exception as exc:
         hr_error = str(exc)
-        log.warning("hr-sync-failed", exc_info=True)
-        structlog.contextvars.unbind_contextvars("source")
+        log.exception("hr-sync-failed")
 
     # 3. Load owner resolver
     async with session_factory() as session:
@@ -288,10 +289,6 @@ async def run(
         status = "failed"
 
     # 6. Write final state
-    # Coerce errors_json to JSON-safe format (handle datetimes, exceptions, etc.)
-    if errors_json is not None:
-        errors_json = json.loads(json.dumps(errors_json, default=str))
-
     async with session_factory() as session:
         try:
             await finish_run(
@@ -304,6 +301,9 @@ async def run(
         except Exception as exc:
             # Rescue: attempt to mark run as failed if finish_run fails
             log.exception("finish-run-failed", run_id=ctx.run_id, error=str(exc))
+            # Rollback can fail on a closed connection; suppress but continue
+            with contextlib.suppress(Exception):
+                await session.rollback()
             try:
                 await session.execute(
                     text("UPDATE coe_runs SET status='failed', finished_at=now() WHERE id=:id"),
