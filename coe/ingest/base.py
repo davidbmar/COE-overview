@@ -19,6 +19,7 @@ async def request_with_retry(
     *,
     max_retries: int = 5,
     json: Any | None = None,
+    data: Any | None = None,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
@@ -31,6 +32,7 @@ async def request_with_retry(
         url: Request URL.
         max_retries: Maximum number of retries for transient errors (default 5).
         json: JSON body for the request.
+        data: Form-encoded body for the request.
         params: Query parameters for the request.
         headers: Custom headers for the request.
 
@@ -48,7 +50,9 @@ async def request_with_retry(
     # Attempt loop: initial + up to max_retries retries
     for attempt_num in range(1, max_retries + 2):
         try:
-            response = await client.request(method, url, json=json, params=params, headers=headers)
+            response = await client.request(
+                method, url, json=json, data=data, params=params, headers=headers
+            )
 
             # 2xx: success
             if 200 <= response.status_code < 300:

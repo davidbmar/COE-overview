@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     jira_api_token: str = ""
     jira_projects: list[str] = []  # COE allowlist, e.g. ["SEC", "OPS"]
 
+    # Wiz ingest settings
+    wiz_client_id: str = ""
+    wiz_client_secret: str = ""
+    wiz_api_url: str = "https://api.wiz.io/graphql"
+    wiz_auth_url: str = "https://auth.wiz.io/oauth/token"
+
     @field_validator("jira_projects", mode="before")
     @classmethod
     def _split_csv_jira_projects(cls, v: object) -> object:
