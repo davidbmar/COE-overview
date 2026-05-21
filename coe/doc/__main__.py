@@ -12,12 +12,10 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from coe.config import get_settings
 from coe.db.models import CoeRun
@@ -74,9 +72,8 @@ async def main() -> None:
         settings.database_url,
         echo=False,
     )
-    async_session_maker: Any = sessionmaker(  # type: ignore[call-overload]
+    async_session_maker = async_sessionmaker(
         engine,
-        class_=AsyncSession,
         expire_on_commit=False,
     )
 

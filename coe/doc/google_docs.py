@@ -86,8 +86,7 @@ async def create_doc(client: DocsClient, name: str, folder_id: str) -> str:
         except HttpError as e:
             # Extract status code and error message from HttpError
             status = e.resp.status
-            # Try to extract reason from the error object
-            message = e._get_reason() if hasattr(e, "_get_reason") else str(e)
+            message = e.reason
             raise GoogleDocsError(status, message) from e
 
     return await asyncio.to_thread(_create)
@@ -115,8 +114,7 @@ async def batch_update(
         except HttpError as e:
             # Extract status code and error message from HttpError
             status = e.resp.status
-            # Try to extract reason from the error object
-            message = e._get_reason() if hasattr(e, "_get_reason") else str(e)
+            message = e.reason
             raise GoogleDocsError(status, message) from e
 
     await asyncio.to_thread(_batch_update)

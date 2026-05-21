@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     crowdstrike_base_url: str = "https://api.crowdstrike.com"
 
     # Vibranium ingest settings
-    vibranium_base_url: str = ""
+    vibranium_base_url: str = "https://vibranium.internal"
     vibranium_api_token: str = ""
 
     # Internal HR ingest settings
