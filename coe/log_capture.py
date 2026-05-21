@@ -8,6 +8,7 @@ log capture to a single task without global state pollution.
 from __future__ import annotations
 
 import contextvars
+from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
@@ -17,7 +18,9 @@ _capture_buffer: contextvars.ContextVar[list[dict[str, Any]] | None] = contextva
 )
 
 
-def capture_processor(_logger: Any, _method: str, event_dict: Any) -> Any:
+def capture_processor(
+    _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """structlog processor that appends to the current task's capture buffer.
 
     If no buffer is active (not inside a CaptureLogsCtx), the event passes through
