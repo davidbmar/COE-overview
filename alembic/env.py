@@ -5,7 +5,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import coe.db.models  # noqa: F401  # ensures models register with Base.metadata
+# Populate Base.metadata before alembic autogenerate runs
+import coe.db.models  # noqa: F401
 from alembic import context
 from coe.config import get_settings
 from coe.db.base import Base
