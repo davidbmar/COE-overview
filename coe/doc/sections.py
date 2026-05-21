@@ -60,11 +60,13 @@ async def build_sections(
     Returns:
         DocSections with the five bucketed and sorted event lists.
     """
-    # Pull all candidate rows in a single query: unresolved events OR recently resolved.
+    # Pull all candidate rows in a single query: unresolved events (including NULL status)
+    # OR recently resolved.
+    # Use coalesce to handle NULL status — treat NULL as "open" for filtering.
     result = await session.execute(
         select(CoeEvent).where(
             or_(
-                CoeEvent.coe_review_status != "resolved",
+                func.coalesce(CoeEvent.coe_review_status, "open") != "resolved",
                 and_(
                     CoeEvent.coe_review_status == "resolved",
                     CoeEvent.updated_at >= func.now() - resolved_window,

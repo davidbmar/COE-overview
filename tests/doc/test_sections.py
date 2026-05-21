@@ -291,6 +291,50 @@ async def test_resolved_window_7_day_exclusion(
 
 
 @pytest.mark.integration
+async def test_ac4_1_null_coe_review_status_included(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """C1 regression: Events with coe_review_status=NULL are included (not dropped).
+
+    The SQL pre-filter must explicitly handle NULL status via coalesce, because
+    NULL != 'resolved' evaluates to NULL (not TRUE) in three-valued logic.
+
+    Seed an event with coe_review_status=NULL and verify it lands in the correct
+    bucket (new or missing_owner depending on other fields).
+    """
+    async with session_factory() as session:
+        now = datetime.now(UTC)
+        since = now - timedelta(days=7)
+
+        # Event with NULL coe_review_status, should still be bucketed normally
+        null_status_event = CoeEvent(
+            source=Source.JIRA,
+            source_id="JIRA-NULL",
+            title="Event with null coe_review_status",
+            severity=CoeSeverity.HIGH,
+            status="open",
+            owner_email="owner@example.com",  # Has owner
+            manager_email=None,
+            missing_owner_in_hr=False,
+            sla_due_at=now + timedelta(days=1),  # Has SLA
+            priority=None,
+            opened_at=since + timedelta(hours=1),  # Opened after since -> "new" bucket
+            updated_at=since + timedelta(hours=1),
+            coe_review_status=None,  # NULL status
+            raw={},
+        )
+
+        session.add(null_status_event)
+        await session.commit()
+
+        sections: DocSections = await build_sections(session, since)
+
+        # Should land in "new" bucket (not be excluded entirely)
+        assert len(sections.new) == 1
+        assert sections.new[0].source_id == "JIRA-NULL"
+
+
+@pytest.mark.integration
 async def test_sort_order_by_severity_and_updated_at(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
