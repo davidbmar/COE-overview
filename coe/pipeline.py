@@ -127,7 +127,7 @@ async def _run_source(
             async with session_factory() as raw_session:
                 raw_buffer: list[dict[str, Any]] = []
                 async for raw in fetcher(since):
-                    raw_dict = raw.model_dump()
+                    raw_dict = raw.model_dump(mode="json")
                     # 1. Persist raw FIRST, before normalization is attempted.
                     #    If normalization throws on this record, the raw audit
                     #    has already been captured.

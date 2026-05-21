@@ -102,15 +102,27 @@ async def test_ac3_5_bootstrap(
 
         # Mock Wiz: empty
         respx.post("https://wiz-auth.test/oauth/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
         )
         respx.post("https://wiz-api.test/graphql").mock(
-            return_value=Response(200, json={"data": {"issues": {"nodes": []}}})
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
         )
 
         # Mock CrowdStrike: empty
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
@@ -118,7 +130,7 @@ async def test_ac3_5_bootstrap(
 
         # Mock Vibranium: empty
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
 
         # Mock HR: 1 employee
@@ -126,14 +138,15 @@ async def test_ac3_5_bootstrap(
             return_value=Response(
                 200,
                 json={
-                    "employees": [
+                    "data": [
                         {
                             "email": "test@test.com",
                             "manager_email": "manager@test.com",
                             "org_path": "engineering",
                             "is_active": True,
                         }
-                    ]
+                    ],
+                    "next_cursor": None,
                 },
             )
         )
@@ -189,22 +202,34 @@ async def test_ac3_1_prior_run(
 
         # Mock other sources: empty
         respx.post("https://wiz-auth.test/oauth/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
         )
         respx.post("https://wiz-api.test/graphql").mock(
-            return_value=Response(200, json={"data": {"issues": {"nodes": []}}})
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
         )
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
         )
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
         respx.get("https://hr.test/employees").mock(
-            return_value=Response(200, json={"employees": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
 
         # Run pipeline
@@ -247,32 +272,45 @@ async def test_ac3_2_idempotent(
             )
         )
         respx.post("https://wiz-auth.test/oauth/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
         )
         respx.post("https://wiz-api.test/graphql").mock(
-            return_value=Response(200, json={"data": {"issues": {"nodes": []}}})
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
         )
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
         )
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
         respx.get("https://hr.test/employees").mock(
             return_value=Response(
                 200,
                 json={
-                    "employees": [
+                    "data": [
                         {
                             "email": "test@test.com",
                             "manager_email": "manager@test.com",
                             "org_path": "engineering",
                             "is_active": True,
                         }
-                    ]
+                    ],
+                    "next_cursor": None,
                 },
             )
         )
@@ -319,32 +357,45 @@ async def test_ac3_3_run_row(
             )
         )
         respx.post("https://wiz-auth.test/oauth/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(200, json={"access_token": "test_token", "expires_in": 1800})
         )
         respx.post("https://wiz-api.test/graphql").mock(
-            return_value=Response(200, json={"data": {"issues": {"nodes": []}}})
+            return_value=Response(
+                200,
+                json={
+                    "data": {
+                        "issues": {
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                            "nodes": [],
+                        }
+                    }
+                },
+            )
         )
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
         )
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
         respx.get("https://hr.test/employees").mock(
             return_value=Response(
                 200,
                 json={
-                    "employees": [
+                    "data": [
                         {
                             "email": "test@test.com",
                             "manager_email": "manager@test.com",
                             "org_path": "engineering",
                             "is_active": True,
                         }
-                    ]
+                    ],
+                    "next_cursor": None,
                 },
             )
         )
@@ -402,7 +453,9 @@ async def test_ac3_4_per_source_failure_isolation_401(
 
         # CrowdStrike: success
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
@@ -410,7 +463,7 @@ async def test_ac3_4_per_source_failure_isolation_401(
 
         # Vibranium: success
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
 
         # HR: success
@@ -418,14 +471,15 @@ async def test_ac3_4_per_source_failure_isolation_401(
             return_value=Response(
                 200,
                 json={
-                    "employees": [
+                    "data": [
                         {
                             "email": "test@test.com",
                             "manager_email": "manager@test.com",
                             "org_path": "engineering",
                             "is_active": True,
                         }
-                    ]
+                    ],
+                    "next_cursor": None,
                 },
             )
         )
@@ -479,7 +533,9 @@ async def test_ac3_4_transient_error(
 
         # CrowdStrike: success
         respx.post("https://cs-api.test/oauth2/token").mock(
-            return_value=Response(200, json={"access_token": "test_token", "token_type": "Bearer"})
+            return_value=Response(
+                200, json={"access_token": "test_token", "expires_in": 1800, "token_type": "bearer"}
+            )
         )
         respx.get("https://cs-api.test/detects/queries/detects/v1").mock(
             return_value=Response(200, json={"resources": []})
@@ -487,7 +543,7 @@ async def test_ac3_4_transient_error(
 
         # Vibranium: success
         respx.get("https://vibranium.test/incidents").mock(
-            return_value=Response(200, json={"incidents": []})
+            return_value=Response(200, json={"data": [], "next_cursor": None})
         )
 
         # HR: success
@@ -495,14 +551,15 @@ async def test_ac3_4_transient_error(
             return_value=Response(
                 200,
                 json={
-                    "employees": [
+                    "data": [
                         {
                             "email": "test@test.com",
                             "manager_email": "manager@test.com",
                             "org_path": "engineering",
                             "is_active": True,
                         }
-                    ]
+                    ],
+                    "next_cursor": None,
                 },
             )
         )
