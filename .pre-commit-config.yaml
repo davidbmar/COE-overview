@@ -25,5 +25,6 @@ repos:
           - "pydantic-settings"
           - "sqlalchemy[mypy]"
           - "alembic"
+          - "pytest"
         args: ["--ignore-missing-imports"]
         exclude: "^alembic/versions/"
