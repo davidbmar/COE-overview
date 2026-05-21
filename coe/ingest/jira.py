@@ -1,0 +1,117 @@
+"""Jira REST API v3 ingest client."""
+
+from __future__ import annotations
+
+import base64
+from collections.abc import AsyncIterator
+from datetime import datetime
+from typing import Any
+
+import httpx
+from pydantic import BaseModel
+
+from coe.config import Settings, get_settings
+from coe.ingest.base import request_with_retry
+
+
+class JiraIssue(BaseModel):
+    """A Jira issue record from the REST API."""
+
+    key: str
+    summary: str
+    priority: str
+    status: str
+    assignee_email: str | None
+    updated: datetime
+    created: datetime
+    raw_payload: dict[str, Any]
+
+
+async def fetch_updated_since(
+    since: datetime, settings: Settings | None = None
+) -> AsyncIterator[JiraIssue]:
+    """Fetch Jira issues updated since a given timestamp.
+
+    Queries the configured COE project allowlist, paginating through results
+    until exhausted.
+
+    Args:
+        since: Minimum updated timestamp (inclusive) in UTC.
+        settings: Settings instance; if None, uses get_settings().
+
+    Yields:
+        JiraIssue models for each issue matching the filter.
+
+    Raises:
+        AuthError: On 401/403.
+        TransientError: On 5xx or transport errors after retries.
+    """
+    if settings is None:
+        settings = get_settings()
+
+    # Build JQL filter
+    projects_str = ", ".join(f'"{p}"' for p in settings.jira_projects)
+    since_iso = since.strftime("%Y-%m-%d %H:%M")
+    jql = f'project IN ({projects_str}) AND updated >= "{since_iso}"'
+
+    # Build basic auth header
+    auth_str = f"{settings.jira_user_email}:{settings.jira_api_token}"
+    auth_b64 = base64.b64encode(auth_str.encode()).decode()
+    headers = {"Authorization": f"Basic {auth_b64}"}
+
+    async with httpx.AsyncClient() as client:
+        next_page_token: str | None = None
+        while True:
+            body: dict[str, Any] = {
+                "jql": jql,
+                "maxResults": 100,
+            }
+            if next_page_token:
+                body["nextPageToken"] = next_page_token
+
+            # Make request with retry logic
+            response = await request_with_retry(
+                client,
+                "jira",
+                "POST",
+                f"{settings.jira_base_url}/rest/api/3/search/jql",
+                json=body,
+                headers=headers,
+            )
+
+            data = response.json()
+
+            # Yield each issue
+            for issue_payload in data.get("issues", []):
+                issue = _parse_jira_issue(issue_payload)
+                yield issue
+
+            # Check pagination
+            if data.get("isLast", True):
+                break
+
+            next_page_token = data.get("nextPageToken")
+            if not next_page_token:
+                break
+
+
+def _parse_jira_issue(payload: dict[str, Any]) -> JiraIssue:
+    """Parse a Jira issue from API response JSON."""
+    fields = payload.get("fields", {})
+    assignee = fields.get("assignee")
+    assignee_email = assignee.get("emailAddress") if assignee else None
+
+    return JiraIssue(
+        key=payload.get("key", ""),
+        summary=fields.get("summary", ""),
+        priority=fields.get("priority", {}).get("name", ""),
+        status=fields.get("status", {}).get("name", ""),
+        assignee_email=assignee_email,
+        updated=datetime.fromisoformat(
+            fields.get("updated", "").replace("Z", "+00:00").replace(".000+0000", "+00:00")
+        ),
+        created=datetime.fromisoformat(
+            fields.get("created", "").replace("Z", "+00:00").replace(".000+0000", "+00:00")
+        ),
+        raw_payload=payload,
+    )
