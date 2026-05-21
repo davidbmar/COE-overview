@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     hr_base_url: str = ""
     hr_api_token: str = ""
 
+    # Google Docs rendering settings
+    google_service_account_file: str = ""
+    google_drive_folder_id: str = ""
+
     @field_validator("jira_projects", mode="before")
     @classmethod
     def _split_csv_jira_projects(cls, v: object) -> object:
