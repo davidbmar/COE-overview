@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     vibranium_base_url: str = ""
     vibranium_api_token: str = ""
 
+    # Internal HR ingest settings
+    hr_base_url: str = ""
+    hr_api_token: str = ""
+
     @field_validator("jira_projects", mode="before")
     @classmethod
     def _split_csv_jira_projects(cls, v: object) -> object:
