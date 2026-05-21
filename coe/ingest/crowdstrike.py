@@ -209,12 +209,9 @@ def _parse_crowdstrike_detect(payload: dict[str, Any]) -> CrowdstrikeDetect:
     max_severity = int(payload.get("max_severity", 0))
     severity_name = _compute_severity_name(max_severity)
 
-    # Parse last_updated from ISO string
+    # Parse last_updated from ISO string (required field; raises ValidationError if missing)
     last_updated_str = payload.get("last_updated", "")
-    if last_updated_str:
-        last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
-    else:
-        last_updated = datetime.now(datetime.now().astimezone().tzinfo)
+    last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
 
     return CrowdstrikeDetect(
         id=payload.get("detection_id", ""),

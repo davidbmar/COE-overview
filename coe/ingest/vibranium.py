@@ -103,20 +103,16 @@ async def fetch_updated_since(
 
 
 def _parse_vibranium_incident(payload: dict[str, Any]) -> VibraniumIncident:
-    """Parse a Vibranium incident from API response JSON."""
-    # Parse timestamps from ISO strings
+    """Parse a Vibranium incident from API response JSON.
+
+    Raises ValidationError if required timestamp fields are missing.
+    """
+    # Parse timestamps from ISO strings (required fields; raises ValidationError if missing)
     updated_at_str = payload.get("updated_at", "")
     created_at_str = payload.get("created_at", "")
 
-    if updated_at_str:
-        updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-    else:
-        updated_at = datetime.now(datetime.now().astimezone().tzinfo)
-
-    if created_at_str:
-        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-    else:
-        created_at = datetime.now(datetime.now().astimezone().tzinfo)
+    updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+    created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
 
     return VibraniumIncident(
         id=payload.get("id", ""),
