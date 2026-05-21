@@ -64,7 +64,10 @@ class CoeRun(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16))  # "ok" | "partial" | "failed"
     events_ingested: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
