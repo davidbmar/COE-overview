@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import random
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -110,7 +112,10 @@ async def request_with_retry(
 
 
 def _compute_sleep_time(response: httpx.Response | None, attempt_number: int) -> float:
-    """Compute sleep time: max(Retry-After header, exponential backoff).
+    """Compute sleep time: max(Retry-After header, exponential backoff + jitter).
+
+    Implements exponential backoff with jitter to prevent thundering herd.
+    Respects Retry-After header (as integer seconds or HTTP-date format).
 
     Args:
         response: The HTTP response (None for transport errors).
@@ -125,13 +130,27 @@ def _compute_sleep_time(response: httpx.Response | None, attempt_number: int) ->
         retry_after_header = response.headers.get("Retry-After")
         if retry_after_header:
             # Try parsing as integer seconds first
-            with contextlib.suppress(ValueError):
-                # If not a simple number, skip for now (HTTP-date parsing omitted)
-                # In a full implementation, would parse HTTP-date format here
+            try:
                 retry_after_seconds = float(retry_after_header)
+            except ValueError:
+                # Try parsing as HTTP-date format
+                try:
+                    target = parsedate_to_datetime(retry_after_header)
+                    if target is None:
+                        retry_after_seconds = 0.0
+                    else:
+                        if target.tzinfo is None:
+                            target = target.replace(tzinfo=UTC)
+                        retry_after_seconds = max(0.0, (target - datetime.now(UTC)).total_seconds())
+                except (TypeError, ValueError):
+                    retry_after_seconds = 0.0
 
-    # Exponential backoff: 2^n with max of 60s
-    exponential_backoff = min(2 ** (attempt_number - 1), 60)
+    # Exponential backoff: 2^(attempt_number - 1) with max of 60s
+    base_delay = min(2 ** (attempt_number - 1), 60)
 
-    # Return max of the two, but at least 0
+    # Add jitter: uniform random between 0 and base_delay * 0.5
+    jitter = random.uniform(0, base_delay * 0.5)
+    exponential_backoff = base_delay + jitter
+
+    # Return max of Retry-After and exponential backoff
     return float(max(retry_after_seconds, exponential_backoff))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import httpx
@@ -386,3 +387,61 @@ class TestRequestWithRetry:
 
             assert response.status_code == 200
             assert route.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_jitter_produces_different_sleeps_for_same_sequence(self) -> None:
+        """I1: Exponential backoff with jitter produces varying sleep times."""
+        from coe.ingest.base import _compute_sleep_time
+
+        # Same attempt_number should produce different sleep times due to jitter
+        sleep_times = []
+        for _ in range(10):
+            sleep_time = _compute_sleep_time(None, attempt_number=2)
+            sleep_times.append(sleep_time)
+
+        # All should be in range [1, 1.5] (2^(2-1) = 2, with jitter up to 2*0.5=1)
+        for sleep_time in sleep_times:
+            assert 2.0 <= sleep_time <= 3.0  # 2^1 + [0, 1]
+
+        # They should not all be identical (jitter working)
+        assert len(set(sleep_times)) > 1, "Jitter should produce varying times"
+
+    @pytest.mark.asyncio
+    async def test_retry_after_http_date_format(self) -> None:
+        """I2: Retry-After header in HTTP-date format is parsed and honored."""
+        from datetime import timedelta
+        from email.utils import formatdate
+
+        sleep_calls: list[float] = []
+
+        async def mock_sleep(duration: float) -> None:
+            sleep_calls.append(duration)
+
+        # Create a Retry-After header with a future timestamp (5 seconds from now)
+        future_time = datetime.now(UTC) + timedelta(seconds=5)
+        http_date = formatdate(timeval=future_time.timestamp(), localtime=False, usegmt=True)
+
+        async with respx.mock:
+            respx.get("https://api.example.com/data").mock(
+                side_effect=[
+                    httpx.Response(
+                        429,
+                        text="Too Many Requests",
+                        headers={"Retry-After": http_date},
+                    ),
+                    httpx.Response(200, json={"result": "ok"}),
+                ]
+            )
+
+            async with httpx.AsyncClient() as client:
+                # Patch the sleep and the datetime to control time
+                with patch("coe.ingest.base.asyncio.sleep", side_effect=mock_sleep):
+                    response = await request_with_retry(
+                        client, "test", "GET", "https://api.example.com/data"
+                    )
+
+            assert response.status_code == 200
+            # Sleep should have been called with approximately 5 seconds
+            assert len(sleep_calls) > 0
+            # Allow some tolerance due to timing variations
+            assert 4.5 <= sleep_calls[0] <= 5.5
