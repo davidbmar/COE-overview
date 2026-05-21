@@ -27,6 +27,7 @@ class Employee(BaseModel):
 
 async def fetch_all_active_employees(
     settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AsyncIterator[Employee]:
     """Fetch all active employees from the internal HR service.
 
@@ -36,6 +37,8 @@ async def fetch_all_active_employees(
 
     Args:
         settings: Settings instance; if None, uses get_settings().
+        client: httpx.AsyncClient for making requests. If None, creates one
+            internally. If provided, the caller is responsible for closing it.
 
     Yields:
         Employee models for each active employee in the directory.
@@ -47,10 +50,11 @@ async def fetch_all_active_employees(
     if settings is None:
         settings = get_settings()
 
-    # Build bearer token auth header
-    headers = {"Authorization": f"Bearer {settings.hr_api_token}"}
+    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[Employee]:
+        """Inner generator that performs the paginated fetch using the provided client."""
+        # Build bearer token auth header
+        headers = {"Authorization": f"Bearer {settings.hr_api_token}"}
 
-    async with httpx.AsyncClient() as client:
         cursor: str | None = None
         while True:
             # Build request params
@@ -60,7 +64,7 @@ async def fetch_all_active_employees(
 
             # Make request with retry logic
             response = await request_with_retry(
-                client,
+                http_client,
                 "hr",
                 "GET",
                 f"{settings.hr_base_url}/employees",
@@ -82,3 +86,13 @@ async def fetch_all_active_employees(
                 break
 
             cursor = next_cursor
+
+    if client is not None:
+        # Use provided client (caller is responsible for cleanup)
+        async for employee in _fetch_paginated(client):
+            yield employee
+    else:
+        # Create and manage our own client
+        async with httpx.AsyncClient() as own_client:
+            async for employee in _fetch_paginated(own_client):
+                yield employee

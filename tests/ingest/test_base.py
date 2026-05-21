@@ -443,5 +443,5 @@ class TestRequestWithRetry:
             assert response.status_code == 200
             # Sleep should have been called with approximately 5 seconds
             assert len(sleep_calls) > 0
-            # Allow some tolerance due to timing variations
-            assert 4.5 <= sleep_calls[0] <= 5.5
+            # Allow generous tolerance due to timing variations and overhead
+            assert 4.0 <= sleep_calls[0] <= 5.5

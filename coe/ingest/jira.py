@@ -28,7 +28,9 @@ class JiraIssue(BaseModel):
 
 
 async def fetch_updated_since(
-    since: datetime, settings: Settings | None = None
+    since: datetime,
+    settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AsyncIterator[JiraIssue]:
     """Fetch Jira issues updated since a given timestamp.
 
@@ -38,6 +40,8 @@ async def fetch_updated_since(
     Args:
         since: Minimum updated timestamp (inclusive) in UTC.
         settings: Settings instance; if None, uses get_settings().
+        client: httpx.AsyncClient for making requests. If None, creates one
+            internally. If provided, the caller is responsible for closing it.
 
     Yields:
         JiraIssue models for each issue matching the filter.
@@ -49,19 +53,20 @@ async def fetch_updated_since(
     if settings is None:
         settings = get_settings()
 
-    # Build JQL filter
-    projects_str = ", ".join(f'"{p}"' for p in settings.jira_projects)
-    # Convert to UTC explicitly and format with second precision and timezone offset
-    since_utc = since.astimezone(UTC)
-    since_iso = since_utc.strftime("%Y-%m-%d %H:%M:%S %z")
-    jql = f'project IN ({projects_str}) AND updated >= "{since_iso}"'
+    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[JiraIssue]:
+        """Inner generator that performs the paginated fetch using the provided client."""
+        # Build JQL filter
+        projects_str = ", ".join(f'"{p}"' for p in settings.jira_projects)
+        # Convert to UTC explicitly and format with second precision and timezone offset
+        since_utc = since.astimezone(UTC)
+        since_iso = since_utc.strftime("%Y-%m-%d %H:%M:%S %z")
+        jql = f'project IN ({projects_str}) AND updated >= "{since_iso}"'
 
-    # Build basic auth header
-    auth_str = f"{settings.jira_user_email}:{settings.jira_api_token}"
-    auth_b64 = base64.b64encode(auth_str.encode()).decode()
-    headers = {"Authorization": f"Basic {auth_b64}"}
+        # Build basic auth header
+        auth_str = f"{settings.jira_user_email}:{settings.jira_api_token}"
+        auth_b64 = base64.b64encode(auth_str.encode()).decode()
+        headers = {"Authorization": f"Basic {auth_b64}"}
 
-    async with httpx.AsyncClient() as client:
         next_page_token: str | None = None
         while True:
             body: dict[str, Any] = {
@@ -73,7 +78,7 @@ async def fetch_updated_since(
 
             # Make request with retry logic
             response = await request_with_retry(
-                client,
+                http_client,
                 "jira",
                 "POST",
                 f"{settings.jira_base_url}/rest/api/3/search/jql",
@@ -95,6 +100,16 @@ async def fetch_updated_since(
             next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
+
+    if client is not None:
+        # Use provided client (caller is responsible for cleanup)
+        async for issue in _fetch_paginated(client):
+            yield issue
+    else:
+        # Create and manage our own client
+        async with httpx.AsyncClient() as own_client:
+            async for issue in _fetch_paginated(own_client):
+                yield issue
 
 
 def _parse_jira_issue(payload: dict[str, Any]) -> JiraIssue:

@@ -28,7 +28,9 @@ class VibraniumIncident(BaseModel):
 
 
 async def fetch_updated_since(
-    since: datetime, settings: Settings | None = None
+    since: datetime,
+    settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AsyncIterator[VibraniumIncident]:
     """Fetch Vibranium incidents updated since a given timestamp.
 
@@ -37,6 +39,8 @@ async def fetch_updated_since(
     Args:
         since: Minimum updated timestamp (inclusive) in UTC.
         settings: Settings instance; if None, uses get_settings().
+        client: httpx.AsyncClient for making requests. If None, creates one
+            internally. If provided, the caller is responsible for closing it.
 
     Yields:
         VibraniumIncident models for each incident matching the filter.
@@ -48,7 +52,8 @@ async def fetch_updated_since(
     if settings is None:
         settings = get_settings()
 
-    async with httpx.AsyncClient() as client:
+    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[VibraniumIncident]:
+        """Inner generator that performs the paginated fetch using the provided client."""
         headers = {"Authorization": f"Bearer {settings.vibranium_api_token}"}
 
         cursor: str | None = None
@@ -63,7 +68,7 @@ async def fetch_updated_since(
             params = {k: v for k, v in params.items() if v is not None}
 
             response = await request_with_retry(
-                client,
+                http_client,
                 "vibranium",
                 "GET",
                 f"{settings.vibranium_base_url}/incidents",
@@ -85,6 +90,16 @@ async def fetch_updated_since(
                 break
 
             cursor = next_cursor
+
+    if client is not None:
+        # Use provided client (caller is responsible for cleanup)
+        async for incident in _fetch_paginated(client):
+            yield incident
+    else:
+        # Create and manage our own client
+        async with httpx.AsyncClient() as own_client:
+            async for incident in _fetch_paginated(own_client):
+                yield incident
 
 
 def _parse_vibranium_incident(payload: dict[str, Any]) -> VibraniumIncident:

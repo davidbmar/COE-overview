@@ -36,12 +36,14 @@ def _clear_token_cache() -> None:
     _token_cache.clear()
 
 
-async def _get_token(client: httpx.AsyncClient, settings: Settings) -> str:
+async def _get_token(
+    client: httpx.AsyncClient | None = None, settings: Settings | None = None
+) -> str:
     """Get a cached token or fetch a new one.
 
     Args:
-        client: httpx.AsyncClient for making requests.
-        settings: Settings instance with CrowdStrike credentials.
+        client: httpx.AsyncClient for making requests. If None, creates one internally.
+        settings: Settings instance with CrowdStrike credentials. If None, uses get_settings().
 
     Returns:
         OAuth2 access token string.
@@ -50,6 +52,9 @@ async def _get_token(client: httpx.AsyncClient, settings: Settings) -> str:
         AuthError: On 401/403 from token endpoint.
         TransientError: On 5xx or transport errors after retries.
     """
+    if settings is None:
+        settings = get_settings()
+
     client_id = settings.crowdstrike_client_id
     now = time.monotonic()
 
@@ -66,23 +71,31 @@ async def _get_token(client: httpx.AsyncClient, settings: Settings) -> str:
         "grant_type": "client_credentials",
     }
 
-    response = await request_with_retry(
-        client,
-        "crowdstrike",
-        "POST",
-        f"{settings.crowdstrike_base_url}/oauth2/token",
-        data=body,
-    )
+    async def _do_request(http_client: httpx.AsyncClient) -> str:
+        """Inner function to make the token request."""
+        response = await request_with_retry(
+            http_client,
+            "crowdstrike",
+            "POST",
+            f"{settings.crowdstrike_base_url}/oauth2/token",
+            data=body,
+        )
 
-    data = response.json()
-    token: str = data["access_token"]
-    expires_in: int = data["expires_in"]
+        data = response.json()
+        token: str = data["access_token"]
+        expires_in: int = data["expires_in"]
 
-    # Cache for expires_in - 60 seconds
-    expires_at = now + expires_in - 60
-    _token_cache[client_id] = (token, expires_at)
+        # Cache for expires_in - 60 seconds
+        expires_at = now + expires_in - 60
+        _token_cache[client_id] = (token, expires_at)
 
-    return token
+        return token
+
+    if client is not None:
+        return await _do_request(client)
+    else:
+        async with httpx.AsyncClient() as temp_client:
+            return await _do_request(temp_client)
 
 
 def _compute_severity_name(max_severity: int) -> str:
@@ -103,7 +116,9 @@ def _compute_severity_name(max_severity: int) -> str:
 
 
 async def fetch_updated_since(
-    since: datetime, settings: Settings | None = None
+    since: datetime,
+    settings: Settings | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> AsyncIterator[CrowdstrikeDetect]:
     """Fetch CrowdStrike detections updated since a given timestamp.
 
@@ -112,6 +127,8 @@ async def fetch_updated_since(
     Args:
         since: Minimum last_updated timestamp (inclusive) in UTC.
         settings: Settings instance; if None, uses get_settings().
+        client: httpx.AsyncClient for making requests. If None, creates one
+            internally. If provided, the caller is responsible for closing it.
 
     Yields:
         CrowdstrikeDetect models for each detection matching the filter.
@@ -123,9 +140,10 @@ async def fetch_updated_since(
     if settings is None:
         settings = get_settings()
 
-    async with httpx.AsyncClient() as client:
+    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[CrowdstrikeDetect]:
+        """Inner generator that performs the paginated fetch using the provided client."""
         # Get token
-        token = await _get_token(client, settings)
+        token = await _get_token(http_client, settings)
         headers = {"Authorization": f"Bearer {token}"}
 
         # Iterate through pages via offset pagination
@@ -137,7 +155,7 @@ async def fetch_updated_since(
             filter_str = f"max_severity:>=70 last_updated:>='{since.isoformat()}'"
 
             response = await request_with_retry(
-                client,
+                http_client,
                 "crowdstrike",
                 "GET",
                 f"{settings.crowdstrike_base_url}/detects/queries/detects/v1",
@@ -154,7 +172,7 @@ async def fetch_updated_since(
 
             # Step 3: Fetch summaries for this batch (batched in up to 1000)
             summaries_response = await request_with_retry(
-                client,
+                http_client,
                 "crowdstrike",
                 "POST",
                 f"{settings.crowdstrike_base_url}/detects/entities/summaries/GET/v1",
@@ -174,6 +192,16 @@ async def fetch_updated_since(
 
             # Move to next page
             offset += limit
+
+    if client is not None:
+        # Use provided client (caller is responsible for cleanup)
+        async for detect in _fetch_paginated(client):
+            yield detect
+    else:
+        # Create and manage our own client
+        async with httpx.AsyncClient() as own_client:
+            async for detect in _fetch_paginated(own_client):
+                yield detect
 
 
 def _parse_crowdstrike_detect(payload: dict[str, Any]) -> CrowdstrikeDetect:
