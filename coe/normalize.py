@@ -78,12 +78,13 @@ def jira_to_coe_event(issue: JiraIssue) -> CoeEvent:
         An unsaved CoeEvent (no id, no last_seen_at).
     """
     severity = normalize_severity(Source.JIRA, issue.priority)
+    title = issue.summary or f"Jira {issue.key}"
 
     return CoeEvent(
         source=Source.JIRA,
         source_id=issue.key,
         severity=severity,
-        title=issue.summary,
+        title=title,
         status=issue.status,
         owner_email=issue.assignee_email,
         manager_email=None,

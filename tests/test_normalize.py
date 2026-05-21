@@ -74,11 +74,12 @@ class TestNormalizeSeverity:
             result = normalize_severity(Source.JIRA, "Low")
 
         assert result == CoeSeverity.UNKNOWN
-        # Verify a warning was logged with source and raw_value
-        assert len(cap_logs) > 0
-        assert cap_logs[0]["log_level"] == "warning"
-        assert cap_logs[0]["source"] == Source.JIRA
-        assert cap_logs[0]["raw_value"] == "Low"
+        # Filter for warning level to isolate the message
+        warnings = [r for r in cap_logs if r.get("log_level") == "warning"]
+        assert len(warnings) == 1
+        assert warnings[0]["source"] == Source.JIRA
+        assert warnings[0]["raw_value"] == "Low"
+        assert warnings[0]["event"] == "unknown severity value"
 
     def test_normalize_severity_case_sensitive(self) -> None:
         """Severity lookup is case-sensitive; wrong case returns UNKNOWN."""
@@ -138,6 +139,23 @@ class TestJiraToCoEEvent:
         event = jira_to_coe_event(issue)
 
         assert event.raw == issue.model_dump(mode="json")
+
+    def test_jira_to_coe_event_empty_summary(self) -> None:
+        """jira_to_coe_event uses 'Jira <key>' when summary is empty."""
+        issue = JiraIssue(
+            key="SEC-999",
+            summary="",
+            priority="High",
+            status="Open",
+            assignee_email="alice@example.com",
+            updated=datetime(2026, 5, 21, 10, 0, 0, tzinfo=UTC),
+            created=datetime(2026, 5, 20, 10, 0, 0, tzinfo=UTC),
+            raw_payload={"key": "SEC-999"},
+        )
+
+        event = jira_to_coe_event(issue)
+
+        assert event.title == "Jira SEC-999"
 
 
 class TestWizToCoEEvent:
