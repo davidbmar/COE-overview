@@ -31,3 +31,47 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["coe"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "alembic/versions"]
+
+[tool.ruff.lint]
+extend-select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "I",    # isort
+    "N",    # pep8-naming
+    "RUF",  # ruff-specific
+    "SIM",  # flake8-simplify
+]
+ignore = ["E501"]  # handled by formatter
+
+[tool.ruff.format]
+preview = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-v --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "unit: fast unit tests with no external dependencies",
+    "integration: tests that hit a real Postgres or other external system",
+]
