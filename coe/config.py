@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     wiz_api_url: str = "https://api.wiz.io/graphql"
     wiz_auth_url: str = "https://auth.wiz.io/oauth/token"
 
+    # CrowdStrike ingest settings
+    crowdstrike_client_id: str = ""
+    crowdstrike_client_secret: str = ""
+    crowdstrike_base_url: str = "https://api.crowdstrike.com"
+
+    # Vibranium ingest settings
+    vibranium_base_url: str = ""
+    vibranium_api_token: str = ""
+
     @field_validator("jira_projects", mode="before")
     @classmethod
     def _split_csv_jira_projects(cls, v: object) -> object:
