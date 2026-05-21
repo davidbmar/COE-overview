@@ -54,12 +54,13 @@ async def upsert_employees(
 
     # ON CONFLICT: update manager_email, org_path, last_synced_at
     # Use stmt.excluded to reference the VALUES from the INSERT
+    # Use statement_timestamp() to get the current time at statement execution (not tx start)
     stmt = stmt.on_conflict_do_update(
         index_elements=["email"],
         set_={
             "manager_email": stmt.excluded.manager_email,
             "org_path": stmt.excluded.org_path,
-            "last_synced_at": func.now(),
+            "last_synced_at": func.statement_timestamp(),
         },
     )
 
