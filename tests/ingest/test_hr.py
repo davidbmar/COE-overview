@@ -8,17 +8,17 @@ import respx
 
 from coe.config import Settings
 from coe.ingest.errors import AuthError, TransientError
-from coe.ingest.hr import Employee, fetch_all_active_employees
+from coe.ingest.hr import HrEmployee, fetch_all_active_employees
 
 pytestmark = pytest.mark.unit
 
 
-class TestEmployee:
-    """Tests for Employee model."""
+class TestHrEmployee:
+    """Tests for HrEmployee model."""
 
     def test_employee_instantiation(self) -> None:
-        """Employee can be instantiated with required fields."""
-        emp = Employee(
+        """HrEmployee can be instantiated with required fields."""
+        emp = HrEmployee(
             email="alice@example.com",
             manager_email="manager@example.com",
             org_path="Engineering/Security",
@@ -31,7 +31,7 @@ class TestEmployee:
 
     def test_employee_with_none_manager(self) -> None:
         """Employee can have None manager_email."""
-        emp = Employee(
+        emp = HrEmployee(
             email="bob@example.com",
             manager_email=None,
             org_path="Executive",
@@ -41,7 +41,7 @@ class TestEmployee:
 
     def test_employee_with_none_org_path(self) -> None:
         """Employee can have None org_path."""
-        emp = Employee(
+        emp = HrEmployee(
             email="carol@example.com",
             manager_email="manager@example.com",
             org_path=None,

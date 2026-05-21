@@ -1,6 +1,8 @@
-# Placeholder contract — endpoint paths and response shape to be replaced when
-# internal Vibranium docs land.
-"""Vibranium incident management API ingest client."""
+"""Vibranium incident management API ingest client.
+
+Placeholder contract — endpoint paths and response shape to be replaced when
+internal Vibranium docs land.
+"""
 
 from __future__ import annotations
 

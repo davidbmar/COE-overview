@@ -16,8 +16,12 @@ from coe.config import Settings, get_settings
 from coe.ingest.base import request_with_retry
 
 
-class Employee(BaseModel):
-    """An employee record from the internal HR service."""
+class HrEmployee(BaseModel):
+    """Transport DTO from the HR API.
+
+    Distinct from coe.db.models.Employee (SQLAlchemy persistence model).
+    Phase 3 normalizes between them.
+    """
 
     email: str
     manager_email: str | None
@@ -28,7 +32,7 @@ class Employee(BaseModel):
 async def fetch_all_active_employees(
     settings: Settings | None = None,
     client: httpx.AsyncClient | None = None,
-) -> AsyncIterator[Employee]:
+) -> AsyncIterator[HrEmployee]:
     """Fetch all active employees from the internal HR service.
 
     The full employee directory is expected to be small enough to pull as a
@@ -41,7 +45,7 @@ async def fetch_all_active_employees(
             internally. If provided, the caller is responsible for closing it.
 
     Yields:
-        Employee models for each active employee in the directory.
+        HrEmployee models for each active employee in the directory.
 
     Raises:
         AuthError: On 401/403.
@@ -50,7 +54,7 @@ async def fetch_all_active_employees(
     if settings is None:
         settings = get_settings()
 
-    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[Employee]:
+    async def _fetch_paginated(http_client: httpx.AsyncClient) -> AsyncIterator[HrEmployee]:
         """Inner generator that performs the paginated fetch using the provided client."""
         # Build bearer token auth header
         headers = {"Authorization": f"Bearer {settings.hr_api_token}"}
@@ -77,7 +81,7 @@ async def fetch_all_active_employees(
             # Yield each active employee
             for employee_payload in data.get("data", []):
                 if employee_payload.get("is_active"):
-                    employee = Employee(**employee_payload)
+                    employee = HrEmployee(**employee_payload)
                     yield employee
 
             # Check pagination
