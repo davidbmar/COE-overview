@@ -6,47 +6,17 @@ Requires: Postgres running and schema migrated (alembic upgrade head).
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import asyncio
 
 import pytest
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from coe.config import get_settings
 from coe.db.employees import upsert_employees
 from coe.db.models import Employee as EmployeeORM
 from coe.ingest.hr import HrEmployee
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Fixture: create an AsyncSession with transaction per test.
-
-    Each test runs in its own transaction which is rolled back after,
-    providing test isolation.
-    """
-    engine = create_async_engine(get_settings().database_url)
-    try:
-        # Use engine.begin() to get a transaction connection
-        async with engine.begin() as conn:
-            # Create a session bound to that connection
-            session = AsyncSession(
-                bind=conn,
-                expire_on_commit=False,
-            )
-            try:
-                # Clean slate: delete all employees at start of test
-                await session.execute(text("DELETE FROM employees"))
-                # Commit this delete
-                await session.commit()
-                yield session
-            finally:
-                # Rollback at end (implicitly done by engine.begin())
-                await session.close()
-    finally:
-        await engine.dispose()
 
 
 async def test_upsert_empty_table_inserts_three_records(db_session: AsyncSession) -> None:
@@ -70,7 +40,7 @@ async def test_upsert_empty_table_inserts_three_records(db_session: AsyncSession
 
 
 async def test_upsert_same_records_idempotent(db_session: AsyncSession) -> None:
-    """Upsert same 3 records again → still 3 rows (idempotent)."""
+    """Upsert same 3 records again → still 3 rows, last_synced_at advances."""
     records = [
         HrEmployee(
             email="alice@x.com", manager_email="mgr1@x.com", org_path="/eng", is_active=True
@@ -86,6 +56,12 @@ async def test_upsert_same_records_idempotent(db_session: AsyncSession) -> None:
     rows_after_first = (await db_session.execute(select(EmployeeORM))).scalars().all()
     assert len(rows_after_first) == 3
 
+    # Capture last_synced_at from each row after first upsert
+    ts_after_first = {r.email: r.last_synced_at for r in rows_after_first}
+
+    # Sleep briefly to guarantee distinct Postgres transaction timestamp
+    await asyncio.sleep(0.01)
+
     # Second upsert (same records)
     count2 = await upsert_employees(db_session, records)
     await db_session.commit()
@@ -98,6 +74,13 @@ async def test_upsert_same_records_idempotent(db_session: AsyncSession) -> None:
     # Verify data is unchanged
     assert {r.email for r in rows_after_second} == {"alice@x.com", "bob@x.com", "charlie@x.com"}
     assert {r.manager_email for r in rows_after_second} == {"mgr1@x.com", "mgr2@x.com", None}
+
+    # Verify last_synced_at advanced for every row
+    ts_after_second = {r.email: r.last_synced_at for r in rows_after_second}
+    for email in ts_after_first:
+        assert ts_after_second[email] > ts_after_first[email], (
+            f"last_synced_at did not advance for {email}"
+        )
 
 
 async def test_upsert_modify_one_manager_email(db_session: AsyncSession) -> None:

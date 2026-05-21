@@ -5,35 +5,13 @@ Tests the load_resolver function against a real Postgres database.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from coe.config import get_settings
 from coe.db.models import Employee as EmployeeORM
 from coe.owner_resolver import load_resolver
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Fixture: create an AsyncSession with transaction rollback."""
-    engine = create_async_engine(get_settings().database_url)
-    try:
-        async with engine.begin() as conn:
-            session = AsyncSession(bind=conn, expire_on_commit=False)
-            try:
-                # Clean slate: delete all employees
-                await session.execute(text("DELETE FROM employees"))
-                await session.commit()
-                yield session
-            finally:
-                await session.close()
-    finally:
-        await engine.dispose()
 
 
 async def test_load_resolver_seeds_from_employees_table(db_session: AsyncSession) -> None:
