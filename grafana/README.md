@@ -81,17 +81,17 @@ The dashboard uses a **template variable** named `$datasource` to allow you to s
 
 ### Required Postgres Permissions
 
-The Postgres datasource user must have `SELECT` permission on the following tables:
+The Postgres datasource user must have `SELECT` permission on the tables the dashboard queries.
+
+Today's panels only read `coe_events` and `coe_runs`. The `employees` grant below is kept for anticipated panels (top managers by open count, etc.) — drop it if you want strict least-privilege.
+
+The COE schema lives in the default `public` schema (no `coe.` schema prefix):
 
 ```sql
 -- Grant permissions to the datasource user (e.g., 'grafana')
-GRANT SELECT ON coe.coe_events TO grafana;
-GRANT SELECT ON coe.coe_runs TO grafana;
-GRANT SELECT ON coe.employees TO grafana;
-
--- Or, grant SELECT on the entire schema:
-GRANT USAGE ON SCHEMA coe TO grafana;
-GRANT SELECT ON ALL TABLES IN SCHEMA coe TO grafana;
+GRANT SELECT ON coe_events TO grafana;
+GRANT SELECT ON coe_runs TO grafana;
+GRANT SELECT ON employees TO grafana;  -- optional: for future panels
 ```
 
 If the datasource user does not have these permissions, panels will fail to render with a "permission denied" error.
@@ -121,7 +121,7 @@ Without these, the dashboard will import successfully but panels may show "No da
 ### Panels show "Plugin error" or "No data"
 
 - **Check Postgres connectivity:** Verify the datasource can connect to the COE database (Admin → Data Sources → Test).
-- **Check permissions:** Verify the datasource user has `SELECT` on `coe_events`, `coe_runs`, and `employees`.
+- **Check permissions:** Verify the datasource user has `SELECT` on `coe_events` and `coe_runs` (and `employees`, if you granted it).
 - **Check data:** Run the SQL queries manually in `psql` to ensure the tables contain data.
 
 ### Import returns a 401 error

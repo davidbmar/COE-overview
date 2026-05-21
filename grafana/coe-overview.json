@@ -324,13 +324,18 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT severity::text, title, owner_email, sla_due_at, source::text AS source, source_id FROM coe_events WHERE coe_review_status IS DISTINCT FROM 'resolved' AND sla_due_at IS NOT NULL AND sla_due_at <= now() + interval '7 days' ORDER BY sla_due_at",
+          "rawSql": "SELECT severity::text AS severity, title, owner_email, sla_due_at, source::text AS source, source_id FROM coe_events WHERE coe_review_status IS DISTINCT FROM 'resolved' AND sla_due_at IS NOT NULL AND sla_due_at <= now() + interval '7 days' ORDER BY sla_due_at",
           "format": "table"
         }
       ],
       "fieldConfig": {
         "defaults": {},
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "sla_due_at"},
+            "properties": [{"id": "unit", "value": "dateTimeAsIso"}]
+          }
+        ]
       },
       "options": {}
     },
@@ -378,7 +383,7 @@
       "targets": [
         {
           "refId": "A",
-          "rawSql": "SELECT started_at AS time, coalesce((SELECT count(*) FROM jsonb_object_keys(errors_json)), 0) AS sources_with_errors FROM coe_runs WHERE $__timeFilter(started_at) ORDER BY started_at",
+          "rawSql": "SELECT started_at AS time, coalesce((SELECT count(*) FROM jsonb_object_keys(errors_json)), 0) AS sources_with_errors FROM coe_runs WHERE $__timeFilter(started_at) AND status IN ('ok','partial') ORDER BY started_at",
           "format": "time_series"
         }
       ],
