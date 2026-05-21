@@ -23,7 +23,10 @@ async def upsert_employees(
     """Upsert employee records into the employees table.
 
     Uses Postgres INSERT ... ON CONFLICT (email) DO UPDATE. On conflict,
-    updates manager_email, org_path, and bumps last_synced_at to now().
+    updates manager_email, org_path, and bumps last_synced_at to
+    statement_timestamp() (not now() — statement_timestamp guarantees a
+    fresh value per statement, so back-to-back upserts strictly advance
+    last_synced_at even within the same transaction).
 
     Args:
         session: AsyncSession for the database operation. Does NOT commit;

@@ -87,8 +87,9 @@ class TestNormalizeSeverity:
             result = normalize_severity(Source.JIRA, "highest")  # lowercase
 
         assert result == CoeSeverity.UNKNOWN
-        assert len(cap_logs) > 0
-        assert cap_logs[0]["log_level"] == "warning"
+        warnings = [r for r in cap_logs if r.get("log_level") == "warning"]
+        assert len(warnings) == 1
+        assert warnings[0]["raw_value"] == "highest"
 
 
 class TestJiraToCoEEvent:
