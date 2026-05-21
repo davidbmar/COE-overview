@@ -73,6 +73,7 @@ class CoeRun(Base):
     events_ingested: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_bootstrap: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     errors_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    doc_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
 class Employee(Base):
