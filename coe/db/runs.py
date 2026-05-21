@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -102,9 +103,15 @@ async def finish_run(
         status: Status string ("ok", "partial", or "failed").
         events_ingested: Count of events successfully ingested.
         errors_json: Error details by source, or None if no errors.
+                     Will be coerced to JSON-safe format (datetime → str, etc).
 
     Commits the session.
     """
+    # Coerce errors_json to JSON-safe format (handle datetimes, exceptions, etc.)
+    # This happens at the write boundary, ensuring ANY caller is safe.
+    if errors_json is not None:
+        errors_json = json.loads(json.dumps(errors_json, default=str))
+
     # Update the row with finished_at, status, events_ingested, errors_json
     row = await session.get(CoeRun, run_id)
     if row is None:
